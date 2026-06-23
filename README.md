@@ -14,7 +14,6 @@ go install github.com/rubiojr/meliafts/cmd/ms
 
 ```
 ms --db ~/.config/melia/melia.db search subject:hello
-```
 ms search   subject:privacy isn't dead
 1 message
 ───────────────────────────────────────
