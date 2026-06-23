@@ -214,6 +214,53 @@ func TestReloadUsesActiveQuery(t *testing.T) {
 	assert.Len(t, m.results, 2)
 }
 
+func TestDetailNavigation(t *testing.T) {
+	st := newTestStore(t) // results: m2 (newer) then m1 (older), by date DESC
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	loadFirstPage(t, m, "")
+	m.state = stateList
+	require.Len(t, m.results, 2)
+	require.Equal(t, "m2", m.results[0].ID)
+
+	// Open the first message.
+	_, cmd := m.Update(key("enter"))
+	runCmd(t, m, cmd)
+	require.Equal(t, stateDetail, m.state)
+	require.Equal(t, "m2", m.detail.ID)
+
+	// n -> next message.
+	_, cmd = m.Update(key("n"))
+	runCmd(t, m, cmd)
+	assert.Equal(t, stateDetail, m.state)
+	assert.Equal(t, 1, m.cursor)
+	require.NotNil(t, m.detail)
+	assert.Equal(t, "m1", m.detail.ID)
+
+	// n at the last message is a no-op.
+	_, cmd = m.Update(key("n"))
+	runCmd(t, m, cmd)
+	assert.Equal(t, 1, m.cursor)
+	assert.Equal(t, "m1", m.detail.ID)
+
+	// p -> previous message.
+	_, cmd = m.Update(key("p"))
+	runCmd(t, m, cmd)
+	assert.Equal(t, 0, m.cursor)
+	assert.Equal(t, "m2", m.detail.ID)
+
+	// Arrow keys navigate too.
+	_, cmd = m.Update(key("down"))
+	runCmd(t, m, cmd)
+	assert.Equal(t, 1, m.cursor)
+	assert.Equal(t, "m1", m.detail.ID)
+
+	_, cmd = m.Update(key("up"))
+	runCmd(t, m, cmd)
+	assert.Equal(t, 0, m.cursor)
+	assert.Equal(t, "m2", m.detail.ID)
+}
+
 func TestQuickFilters(t *testing.T) {
 	st := newTestStore(t) // m1: inbox+unread, m2: sent+read
 	m := newModel(st, 50, defaultReloadInterval, "", testTheme)

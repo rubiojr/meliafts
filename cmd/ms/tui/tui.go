@@ -31,7 +31,9 @@ message. Press Esc to step back and q (or Ctrl+C) to quit. An optional initial
 query may be supplied on the command line.
 
 While browsing the list, Ctrl+R reloads, u filters to unread messages and s to
-sent messages. Results load automatically as you scroll and refresh on a timer.`,
+sent messages. In a message, n/p (or the arrow keys) move to the next/previous
+message and PgUp/PgDn scroll the body. Results load automatically as you scroll
+and refresh on a timer.`,
 	Flags: []cli.Flag{
 		&cli.IntFlag{
 			Name:    "limit",
@@ -412,10 +414,32 @@ func (m *model) keyDetail(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.state = stateList
 		m.detail = nil
 		return m, nil
+	case "n", "down":
+		return m, m.openSibling(1)
+	case "p", "up":
+		return m, m.openSibling(-1)
 	}
+	// j/k, PgUp/PgDn, space, etc. scroll the message body.
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)
 	return m, cmd
+}
+
+// openSibling moves the list cursor by delta and opens that message, so n/p (or
+// the arrow keys) page through messages while reading. It also keeps the list
+// loading ahead via maybeFetchMore so navigation can run past the current page.
+func (m *model) openSibling(delta int) tea.Cmd {
+	if len(m.results) == 0 {
+		return nil
+	}
+	cmds := []tea.Cmd{m.maybeFetchMore()}
+	if next := clamp(m.cursor+delta, 0, len(m.results)-1); next != m.cursor {
+		m.cursor = next
+		m.syncScroll()
+		m.loading = true
+		cmds = append(cmds, m.loadDetail(m.results[m.cursor].ID))
+	}
+	return tea.Batch(cmds...)
 }
 
 // --- navigation & layout ---------------------------------------------------

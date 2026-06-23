@@ -164,7 +164,7 @@ func (m *model) detailStatus() string {
 	default:
 		pct = fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))
 	}
-	return fmt.Sprintf("%s · ↑/↓ scroll · ESC back · q quit", pct)
+	return fmt.Sprintf("%s · n/p ↑↓ next·prev · PgUp/PgDn scroll · ESC back · q quit", pct)
 }
 
 // renderBody builds the scrollable message body, preferring plain text and
