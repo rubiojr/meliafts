@@ -2,8 +2,6 @@
 
 A [Melia](https://melia.buxjr.com) email search CLI (very much a vibecoded WiP).
 
-![](/docs/meliafts.gif)
-
 ## Install
 
 ```
