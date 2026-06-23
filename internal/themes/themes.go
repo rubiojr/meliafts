@@ -7,7 +7,7 @@ package themes
 import "sort"
 
 // Default is the theme used when none is requested.
-const Default = "amber"
+const Default = "ice"
 
 // Palette describes a theme as a set of hex colors. The first eight roles form
 // a monochrome base; the optional roles let "colorful" themes paint individual
