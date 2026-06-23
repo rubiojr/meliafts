@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+DB="$HOME/.var/app/com.buxjr.melia/config/melia/melia.db"
+BACKUP_DIR="$HOME/Backups/Melia"
+
+if ! [ -f "$DB" ]; then
+  echo "Invalid database location."
+  exit 1
+fi
+sqlite3 "$DB" "VACUUM INTO '$BACKUP_DIR/melia-$(date +%Y%m%d-%H%M%S).db'"
