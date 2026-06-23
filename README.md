@@ -2,6 +2,8 @@
 
 A [Melia](https://melia.buxjr.com) read-only, email search CLI and TUI (very much a vibecoded WiP).
 
+**Note:** I'm a Proton Mail user, so other providers are currently not tested.
+
 ## Features
 
 - **Read-only by design** — only ever opens the Melia SQLite database for reading, so it can never change, delete or send mail.
