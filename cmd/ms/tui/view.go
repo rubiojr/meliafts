@@ -128,7 +128,23 @@ func (m *model) browseStatus() string {
 	if m.loadingMore {
 		hint = "loading more… · " + hint
 	}
+	if tag := m.actionsTag(); tag != "" {
+		return count + " · " + tag + " · " + hint
+	}
 	return count + " · " + hint
+}
+
+// actionsTag is the status-bar indicator for fired actions, empty unless actions
+// are enabled and at least one has run this session.
+func (m *model) actionsTag() string {
+	if m.actions == nil || m.actionsFired == 0 {
+		return ""
+	}
+	tag := fmt.Sprintf("%d fired", m.actionsFired)
+	if m.actionWarn {
+		tag += " (errors)"
+	}
+	return tag
 }
 
 // --- detail screen ---------------------------------------------------------

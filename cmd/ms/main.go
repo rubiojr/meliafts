@@ -10,6 +10,7 @@ import (
 	"github.com/rubiojr/meliafts/cmd/ms/search"
 	"github.com/rubiojr/meliafts/cmd/ms/tui"
 	"github.com/rubiojr/meliafts/cmd/ms/util"
+	"github.com/rubiojr/meliafts/cmd/ms/watch"
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,6 +23,7 @@ func main() {
 		Commands: []*cli.Command{
 			search.Command,
 			tui.Command,
+			watch.Command,
 		},
 	}
 

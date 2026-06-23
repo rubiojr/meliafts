@@ -4,12 +4,15 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/rubiojr/meliafts/internal/actions"
 	"github.com/rubiojr/meliafts/internal/store"
 	"github.com/rubiojr/meliafts/internal/themes"
 	"github.com/urfave/cli/v3"
@@ -52,6 +55,29 @@ and refresh on a timer.`,
 			Value: defaultReloadInterval,
 			Usage: "auto-reload interval (e.g. 30s, 2m; 0 to disable)",
 		},
+		&cli.BoolFlag{
+			Name:  "actions",
+			Usage: "run action scripts when new mail arrives on reload (see docs/actions.md)",
+		},
+		&cli.StringFlag{
+			Name:  "actions-dir",
+			Value: actions.DefaultDir(),
+			Usage: "directory of action scripts",
+		},
+		&cli.IntFlag{
+			Name:  "actions-max",
+			Value: actions.DefaultMax,
+			Usage: "most scripts fired per reload",
+		},
+		&cli.DurationFlag{
+			Name:  "timeout",
+			Value: actions.DefaultTimeout,
+			Usage: "per-script timeout",
+		},
+		&cli.StringSliceFlag{
+			Name:  "actions-filter",
+			Usage: "only run scripts whose filename matches this glob (repeatable; allow-list)",
+		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		th, err := newTheme(cmd.String("theme"))
@@ -67,10 +93,30 @@ and refresh on a timer.`,
 
 		initial := strings.Join(cmd.Args().Slice(), " ")
 		m := newModel(st, cmd.Int("limit"), cmd.Duration("reload"), initial, th)
+		if cmd.Bool("actions") {
+			enableTUIActions(m, &actions.Runner{
+				Dir:     cmd.String("actions-dir"),
+				DBPath:  cmd.String("db"),
+				Max:     cmd.Int("actions-max"),
+				Timeout: cmd.Duration("timeout"),
+				Filter:  cmd.StringSlice("actions-filter"),
+			})
+		}
 		p := tea.NewProgram(m, tea.WithContext(ctx))
 		_, err = p.Run()
 		return err
 	},
+}
+
+// enableTUIActions attaches the action runner to the model when it has at least
+// one runnable script. The hint is printed before the alt-screen takes over.
+func enableTUIActions(m *model, runner *actions.Runner) {
+	if !runner.Enabled() {
+		fmt.Fprintf(os.Stderr, "ms tui: --actions set but no executable scripts in %s (see docs/actions.md)\n", runner.Dir)
+		return
+	}
+	m.actions = runner
+	m.tracker = actions.NewTracker()
 }
 
 // sessionState is the current screen of the UI.
@@ -107,6 +153,14 @@ type model struct {
 	detail  *store.Message
 	loading bool
 	err     error
+
+	// actions, when non-nil, runs action scripts for messages that newly appear
+	// on a reload. tracker is the new-message detector; actionsFired/actionWarn
+	// drive a small status-bar indicator.
+	actions      *actions.Runner
+	tracker      *actions.Tracker
+	actionsFired int
+	actionWarn   bool
 }
 
 func newModel(st *store.Store, limit int, reload time.Duration, initialQuery string, th theme) *model {
@@ -160,6 +214,13 @@ type detailMsg struct {
 
 // reloadTickMsg is delivered on the auto-reload timer.
 type reloadTickMsg struct{}
+
+// actionsRanMsg reports the outcome of an asynchronous action batch so the model
+// can update its indicator.
+type actionsRanMsg struct {
+	fired int
+	err   error
+}
 
 // search runs the query and wraps the rows with wrap, off the UI goroutine.
 func (m *model) search(q string, limit, offset int, wrap func([]store.Message, error) tea.Msg) tea.Cmd {
@@ -229,6 +290,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onPage(msg)
 	case detailMsg:
 		return m.onDetail(msg)
+	case actionsRanMsg:
+		m.actionsFired += msg.fired
+		if msg.err != nil {
+			m.actionWarn = true
+		}
+		return m, nil
 	case reloadTickMsg:
 		// Silently refresh the loaded span and re-arm the timer.
 		return m, tea.Batch(m.reloadPages(), m.scheduleReload())
@@ -268,7 +335,29 @@ func (m *model) onSearch(msg searchMsg) (tea.Model, tea.Cmd) {
 		m.state = stateList
 		m.input.Blur()
 	}
-	return m, m.maybeFetchMore()
+	return m, tea.Batch(m.detectActions(msg.keepPos), m.maybeFetchMore())
+}
+
+// detectActions reacts to a freshly loaded result set. On a reload it fires
+// actions for messages that are new since the baseline; on a fresh query (or the
+// first load) it only re-baselines, so changing the query never replays mail.
+func (m *model) detectActions(reload bool) tea.Cmd {
+	if m.actions == nil {
+		return nil
+	}
+	if !reload {
+		m.tracker.Seen(m.results)
+		return nil
+	}
+	fresh := m.tracker.Fresh(m.results)
+	if len(fresh) == 0 {
+		return nil
+	}
+	runner, query := m.actions, m.query
+	return func() tea.Msg {
+		fired, err := runner.FireNew(context.Background(), query, fresh)
+		return actionsRanMsg{fired: fired, err: err}
+	}
 }
 
 // onPage appends a fetched page, guarding against stale results from a query
@@ -285,6 +374,9 @@ func (m *model) onPage(msg pageMsg) (tea.Model, tea.Cmd) {
 	}
 	m.results = append(m.results, msg.results...)
 	m.loadedAll = len(msg.results) < m.pageSize
+	if m.tracker != nil {
+		m.tracker.Seen(msg.results) // appended older rows are part of the baseline
+	}
 	return m, m.maybeFetchMore()
 }
 

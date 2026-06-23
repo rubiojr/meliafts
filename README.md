@@ -2,6 +2,16 @@
 
 A [Melia](https://melia.buxjr.com) read-only, email search CLI and TUI (very much a vibecoded WiP).
 
+## Features
+
+- **Read-only by design** — only ever opens the Melia SQLite database for reading, so it can never change, delete or send mail.
+- **Gmail-style query language** `subject:`, `from:`/`to:`, `body:`, `newer:`/`older:`, `in:`, `unread:`, `flagged:`, `attachments:`, quoted `"phrases"`, `prefix*` and `-negation`.
+- **Scriptable search** (`ms search`) with styled output, `--json`, and `--sql`/`--fts` to inspect the compiled query without touching the database.
+- **Interactive TUI** (`ms tui`) with endless scrolling, auto-reload, quick filters (unread/sent), and readable rendering of HTML/marketing emails.
+- **Themes** — `amber`, `green`, `ice`, `paper`, `synthwave` (`--theme`).
+- **Actions** — run your own scripts when new mail arrives, git-hooks style: headless with `ms watch` or live in the TUI with `ms tui --actions`. See [docs/actions.md](docs/actions.md).
+- **Single static binary**, pure Go with no cgo (via `modernc.org/sqlite`).
+
 ## Install
 
 ```
