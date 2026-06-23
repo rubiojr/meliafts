@@ -421,17 +421,3 @@ func TestModelScrolling(t *testing.T) {
 	assert.Equal(t, 0, m.cursor)
 	assert.Equal(t, 0, m.top)
 }
-
-func TestHTMLToText(t *testing.T) {
-	in := `<html><head><style>.x{color:red}</style></head>
-		<body><p>Hello <b>world</b></p><br>line two<script>alert(1)</script>
-		<div>caf&eacute; &amp; tea</div></body></html>`
-	out := htmlToText(in)
-
-	assert.Contains(t, out, "Hello world")
-	assert.Contains(t, out, "line two")
-	assert.Contains(t, out, "café & tea")
-	assert.NotContains(t, out, "alert(1)")
-	assert.NotContains(t, out, "color:red")
-	assert.NotContains(t, out, "<")
-}

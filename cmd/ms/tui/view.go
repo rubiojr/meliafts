@@ -2,12 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"html"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/rubiojr/meliafts/internal/renderer"
 	"github.com/rubiojr/meliafts/internal/store"
 )
 
@@ -167,21 +167,14 @@ func (m *model) detailStatus() string {
 	return fmt.Sprintf("%s · n/p ↑↓ next·prev · PgUp/PgDn scroll · ESC back · q quit", pct)
 }
 
-// renderBody builds the scrollable message body, preferring plain text and
-// falling back to a stripped HTML body or the snippet.
+// renderBody builds the scrollable message body. The renderer picks the best
+// available source (plain text, then converted HTML, then the snippet) and
+// returns clean unstyled text; here we only theme and width-wrap it.
 func (m *model) renderBody(d *store.Message) string {
-	text := strings.TrimSpace(d.BodyText)
-	if text == "" {
-		text = strings.TrimSpace(htmlToText(d.BodyHTML))
-	}
-	if text == "" {
-		text = strings.TrimSpace(d.Snippet)
-	}
+	text := renderer.Body(d.BodyText, d.BodyHTML, d.Snippet)
 	if text == "" {
 		return m.theme.empty.Render("(this message has no readable body)")
 	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
 	return m.theme.body.Width(max(10, m.width-1)).Render(text)
 }
 
@@ -284,85 +277,4 @@ func truncate(s string, max int) string {
 		return "…"
 	}
 	return string(r[:max-1]) + "…"
-}
-
-// htmlToText is a small best-effort HTML-to-text converter for rendering
-// HTML-only message bodies. It drops script/style blocks, turns block-level
-// tags into line breaks, strips remaining tags and unescapes entities.
-func htmlToText(s string) string {
-	if s == "" {
-		return ""
-	}
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = stripBlock(s, "script")
-	s = stripBlock(s, "style")
-
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] != '<' {
-			b.WriteByte(s[i])
-			i++
-			continue
-		}
-		end := strings.IndexByte(s[i:], '>')
-		if end < 0 {
-			break
-		}
-		name, closing := tagName(s[i+1 : i+end])
-		if name == "br" || name == "hr" || (closing && isBlockTag(name)) {
-			b.WriteByte('\n')
-		}
-		i += end + 1
-	}
-	return tidyText(html.UnescapeString(b.String()))
-}
-
-func isBlockTag(name string) bool {
-	switch name {
-	case "p", "div", "tr", "li", "ul", "ol", "table",
-		"h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre":
-		return true
-	}
-	return false
-}
-
-func tagName(raw string) (name string, closing bool) {
-	raw = strings.TrimSpace(raw)
-	closing = strings.HasPrefix(raw, "/")
-	raw = strings.TrimPrefix(raw, "/")
-	for i := 0; i < len(raw); i++ {
-		switch raw[i] {
-		case ' ', '\t', '\n', '/', '>':
-			return strings.ToLower(raw[:i]), closing
-		}
-	}
-	return strings.ToLower(raw), closing
-}
-
-func stripBlock(s, tag string) string {
-	for {
-		lower := strings.ToLower(s)
-		start := strings.Index(lower, "<"+tag)
-		if start < 0 {
-			return s
-		}
-		closeTag := "</" + tag + ">"
-		rel := strings.Index(lower[start:], closeTag)
-		if rel < 0 {
-			return s[:start]
-		}
-		s = s[:start] + s[start+rel+len(closeTag):]
-	}
-}
-
-func tidyText(s string) string {
-	lines := strings.Split(s, "\n")
-	for i := range lines {
-		lines[i] = strings.TrimRight(lines[i], " \t")
-	}
-	s = strings.Join(lines, "\n")
-	for strings.Contains(s, "\n\n\n") {
-		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
-	}
-	return strings.TrimSpace(s)
 }
