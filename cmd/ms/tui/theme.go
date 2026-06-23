@@ -80,6 +80,17 @@ var palettes = map[string]palette{
 		bar: "#7ee8c8", barText: "#03121f",
 		rule: "#4f9fd0", prompt: "#7ee8c8",
 	},
+	// Paper: a warm light theme — fountain-pen inks on parchment. Dark sepia
+	// text on cream, with green/burgundy/sienna/ochre ink accents and coffee
+	// brown chrome bars carrying cream text.
+	"paper": {
+		bg: "#f3e9d2", bgAlt: "#e6d8ba", fg: "#4a3b28", hi: "#2a201a",
+		dim: "#9a8a6a", low: "#b3a07e", accent: "#c0532e", danger: "#a52a2a",
+		sender: "#356b4f", subject: "#8a3b52", label: "#356b4f", attach: "#b5871d",
+		title: "#5b3a1f", titleAlt: "#7a5230",
+		bar: "#6b4f2a", barText: "#f3e9d2",
+		rule: "#c8b896", prompt: "#8a5a2a",
+	},
 }
 
 // themeNames returns the available theme names in stable, sorted order.
