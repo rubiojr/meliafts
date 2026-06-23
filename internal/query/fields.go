@@ -5,6 +5,8 @@ package query
 // and the messages table). Keeping the mapping in one place makes it easy to
 // add new operators or adapt to schema changes.
 
+import "slices"
+
 // ftsField maps a user-facing field keyword to one or more FTS5 columns of the
 // messages_fts virtual table. A keyword that maps to multiple columns (such as
 // "sender") is compiled into a `{col_a col_b} : "value"` column-filter.
@@ -83,10 +85,5 @@ var folderTypeList = []string{"inbox", "sent", "drafts", "trash", "spam"}
 
 // isFolderType reports whether t is a valid folder type.
 func isFolderType(t string) bool {
-	for _, v := range folderTypeList {
-		if v == t {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(folderTypeList, t)
 }
