@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rubiojr/meliafts/cmd/ms/util"
 	"github.com/rubiojr/meliafts/internal/query"
 	"github.com/rubiojr/meliafts/internal/store"
 	"github.com/urfave/cli/v3"
@@ -115,6 +116,10 @@ func run(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	defer st.Close()
+
+	if err := util.VerifySchema(cmd, st); err != nil {
+		return err
+	}
 
 	results, err := st.Search(queryStr, limit, 0)
 	if err != nil {

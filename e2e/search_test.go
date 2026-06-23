@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -116,5 +117,22 @@ func TestE2E(t *testing.T) {
 		out, code := runMS(t, "--db", "/no/such/melia.db", "search", "hi")
 		assert.Equal(t, 1, code)
 		assert.Contains(t, out, "cannot open database")
+	})
+
+	t.Run("schema drift bails unless forced", func(t *testing.T) {
+		dbp := fixtureDB(t) // valid, stamped schema_version
+		w, err := sql.Open("sqlite", dbp)
+		require.NoError(t, err)
+		_, err = w.Exec("UPDATE settings SET value='999' WHERE key='schema_version'")
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		out, code := runMS(t, "--db", dbp, "search", "hello")
+		assert.Equal(t, 1, code)
+		assert.Contains(t, out, "unsupported melia schema version 999")
+
+		out, code = runMS(t, "--db", dbp, "--force-schema-unsupported", "search", "hello")
+		assert.Equal(t, 0, code, out)
+		assert.Contains(t, out, "schema version 999", "the warning is still printed under --force")
 	})
 }

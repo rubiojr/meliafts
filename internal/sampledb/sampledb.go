@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
 	meliadb "github.com/rubiojr/meliafts/db"
+	readdb "github.com/rubiojr/meliafts/internal/db"
 )
 
 const (
@@ -71,6 +73,9 @@ func Generate(ctx context.Context, db *sql.DB, opts Options) error {
 	if err := meliadb.Apply(ctx, db); err != nil {
 		return err
 	}
+	if err := insertSettings(ctx, db); err != nil {
+		return err
+	}
 	if err := insertAccount(ctx, db); err != nil {
 		return err
 	}
@@ -78,6 +83,18 @@ func Generate(ctx context.Context, db *sql.DB, opts Options) error {
 		return err
 	}
 	return insertMessages(ctx, db, opts)
+}
+
+// insertSettings stamps the schema version so generated databases look like a
+// real, current melia database to the drift check.
+func insertSettings(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES ('schema_version', ?)`,
+		strconv.Itoa(readdb.SupportedSchemaVersion))
+	if err != nil {
+		return fmt.Errorf("insert settings: %w", err)
+	}
+	return nil
 }
 
 func insertAccount(ctx context.Context, db *sql.DB) error {

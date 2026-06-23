@@ -48,6 +48,12 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// CheckSchema reports whether the open database's melia schema version is the
+// one this build supports. It returns a *db.SchemaError on drift, nil otherwise.
+func (s *Store) CheckSchema() error {
+	return db.CheckSchema(s.db)
+}
+
 // Compile parses and compiles a Gmail-style query string, returning the SQL and
 // bound arguments. It is exposed so callers (e.g. `--sql`/`--fts`) can inspect
 // the generated query without executing it.

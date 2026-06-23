@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/rubiojr/meliafts/cmd/ms/util"
 	"github.com/rubiojr/meliafts/internal/actions"
 	"github.com/rubiojr/meliafts/internal/store"
 	"github.com/rubiojr/meliafts/internal/themes"
@@ -98,6 +99,10 @@ default; pass --include-spam to show spam too.`,
 			return err
 		}
 		defer st.Close()
+
+		if err := util.VerifySchema(cmd, st); err != nil {
+			return err
+		}
 
 		initial := strings.Join(cmd.Args().Slice(), " ")
 		m := newModel(st, cmd.Int("limit"), cmd.Duration("reload"), initial, th)
