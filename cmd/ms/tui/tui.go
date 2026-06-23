@@ -108,7 +108,7 @@ func newModel(st *store.Store, limit int, initialQuery string, th theme) *model 
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.runSearch(m.input.Value(), m.input.Value() != ""))
+	return tea.Batch(m.input.Focus(), m.runSearch(m.input.Value(), m.input.Value() != "", false))
 }
 
 // --- messages & commands ---------------------------------------------------
@@ -117,6 +117,7 @@ type searchMsg struct {
 	results []store.Message
 	err     error
 	advance bool // move focus to the list when results arrive
+	keepPos bool // preserve the cursor/scroll position (used by reload)
 }
 
 type detailMsg struct {
@@ -124,11 +125,11 @@ type detailMsg struct {
 	err error
 }
 
-func (m *model) runSearch(q string, advance bool) tea.Cmd {
+func (m *model) runSearch(q string, advance, keepPos bool) tea.Cmd {
 	st, limit := m.store, m.limit
 	return func() tea.Msg {
 		res, err := st.Search(q, limit)
-		return searchMsg{results: res, err: err, advance: advance}
+		return searchMsg{results: res, err: err, advance: advance, keepPos: keepPos}
 	}
 }
 
@@ -176,7 +177,12 @@ func (m *model) onSearch(msg searchMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.results = msg.results
-	m.cursor, m.top = 0, 0
+	if msg.keepPos {
+		m.cursor = clamp(m.cursor, 0, max(0, len(m.results)-1))
+		m.syncScroll()
+	} else {
+		m.cursor, m.top = 0, 0
+	}
 	if msg.advance && len(m.results) > 0 {
 		m.state = stateList
 		m.input.Blur()
@@ -199,8 +205,13 @@ func (m *model) onDetail(msg detailMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) onKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if k.String() == "ctrl+c" {
+	switch k.String() {
+	case "ctrl+c":
 		return m, tea.Quit
+	case "ctrl+r":
+		// Reload the current query, keeping the cursor where it is.
+		m.loading = true
+		return m, m.runSearch(m.input.Value(), false, true)
 	}
 	switch m.state {
 	case stateSearch:
@@ -217,7 +228,7 @@ func (m *model) keySearch(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "enter":
 		m.loading = true
-		return m, m.runSearch(m.input.Value(), true)
+		return m, m.runSearch(m.input.Value(), true, false)
 	case "down", "tab":
 		if len(m.results) > 0 {
 			m.state = stateList

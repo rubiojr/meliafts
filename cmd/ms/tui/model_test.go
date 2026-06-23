@@ -26,7 +26,7 @@ func mustTheme(name string) theme {
 
 func TestThemes(t *testing.T) {
 	names := themeNames()
-	assert.Subset(t, names, []string{"amber", "green", "synthwave", "ice"})
+	assert.Subset(t, names, []string{"amber", "green", "synthwave", "ice", "paper"})
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -85,6 +85,8 @@ func key(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "esc":
 		return tea.KeyPressMsg{Code: tea.KeyEsc}
+	case "ctrl+r":
+		return tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'r'}
 	default:
 		return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
 	}
@@ -108,6 +110,28 @@ func TestKeyStringMapping(t *testing.T) {
 	assert.Equal(t, "esc", key("esc").String())
 	assert.Equal(t, "/", key("/").String())
 	assert.Equal(t, "q", key("q").String())
+	assert.Equal(t, "ctrl+r", key("ctrl+r").String())
+}
+
+func TestReloadKeepsPosition(t *testing.T) {
+	st := newTestStore(t)
+	m := newModel(st, 50, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	runCmd(t, m, m.runSearch("", false, false))
+	require.Len(t, m.results, 2)
+
+	// Browse the list and select the second message.
+	m.state = stateList
+	m.moveTo(1)
+	require.Equal(t, 1, m.cursor)
+
+	// ctrl+r reloads while preserving the cursor and the list state.
+	_, cmd := m.Update(key("ctrl+r"))
+	require.NotNil(t, cmd)
+	runCmd(t, m, cmd)
+	assert.Equal(t, stateList, m.state)
+	assert.Equal(t, 1, m.cursor)
+	assert.Len(t, m.results, 2)
 }
 
 func TestModelSearchFlow(t *testing.T) {
@@ -116,7 +140,7 @@ func TestModelSearchFlow(t *testing.T) {
 
 	// Window size and initial (empty) search loading all messages.
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	runCmd(t, m, m.runSearch("", false))
+	runCmd(t, m, m.runSearch("", false, false))
 	require.Len(t, m.results, 2)
 	assert.Equal(t, stateSearch, m.state)
 

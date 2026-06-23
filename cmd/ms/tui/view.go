@@ -114,13 +114,13 @@ func (m *model) flagBadge(r store.Message) string {
 
 func (m *model) browseStatus() string {
 	if m.state == stateSearch {
-		return "ENTER run · ↓/TAB browse · ESC quit"
+		return "ENTER run · ↓/TAB browse · ^R reload · ESC quit"
 	}
 	pos := 0
 	if len(m.results) > 0 {
 		pos = m.cursor + 1
 	}
-	return fmt.Sprintf("%d/%d · ↑↓ move · ENTER open · / edit query · q quit", pos, len(m.results))
+	return fmt.Sprintf("%d/%d · ↑↓ move · ENTER open · ^R reload · / edit · q quit", pos, len(m.results))
 }
 
 // --- detail screen ---------------------------------------------------------
