@@ -1,6 +1,6 @@
 # Melia Email Database CLI
 
-A [Melia](https://melia.buxjr.com) email search CLI (very much a vibecoded WiP).
+A [Melia](https://melia.buxjr.com) read-only, email search CLI and TUI (very much a vibecoded WiP).
 
 ## Install
 
