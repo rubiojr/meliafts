@@ -63,11 +63,30 @@ func (s *Store) Compile(queryStr string, limit int) (*query.Compiled, error) {
 // list fields populated. A limit of 0 means no limit; offset skips that many
 // rows (for paginated loading).
 func (s *Store) Search(queryStr string, limit, offset int) ([]Message, error) {
+	return s.search(queryStr, query.Options{Limit: limit, Offset: offset})
+}
+
+// SearchView is like Search but returns a deduplicated mailbox view: messages
+// that appear in more than one folder (e.g. a Gmail/Proton "All Mail" copy) are
+// collapsed to a single row per Message-ID. Unless includeSpam is set, every
+// message whose Message-ID appears in a spam folder is hidden, even when a copy
+// also lives in another folder. It backs the interactive TUI.
+func (s *Store) SearchView(queryStr string, limit, offset int, includeSpam bool) ([]Message, error) {
+	return s.search(queryStr, query.Options{
+		Limit:    limit,
+		Offset:   offset,
+		Dedup:    true,
+		HideSpam: !includeSpam,
+	})
+}
+
+// search compiles queryStr with opts and returns the matching list rows.
+func (s *Store) search(queryStr string, opts query.Options) ([]Message, error) {
 	q, err := query.Parse(queryStr)
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := q.Compile(query.Options{Limit: limit, Offset: offset})
+	compiled, err := q.Compile(opts)
 	if err != nil {
 		return nil, err
 	}

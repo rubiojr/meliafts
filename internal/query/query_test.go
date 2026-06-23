@@ -178,6 +178,63 @@ func TestCompileFolder(t *testing.T) {
 	})
 }
 
+func TestCompileView(t *testing.T) {
+	const dedup = "m.rowid IN (SELECT MIN(rowid) FROM messages WHERE message_id IS NOT NULL AND message_id <> '' GROUP BY message_id)"
+	const hideSpam = "m.message_id NOT IN (SELECT message_id FROM messages WHERE message_id IS NOT NULL AND message_id <> '' AND folder_id IN (SELECT id FROM folders WHERE type = 'spam'))"
+
+	t.Run("off by default", func(t *testing.T) {
+		q, _ := Parse("")
+		c, err := q.Compile(Options{})
+		require.NoError(t, err)
+		assert.NotContains(t, c.SQL, "GROUP BY message_id")
+		assert.NotContains(t, c.SQL, "type = 'spam'")
+	})
+
+	t.Run("empty query, non-fts shape", func(t *testing.T) {
+		q, _ := Parse("")
+		c, err := q.Compile(Options{Dedup: true, HideSpam: true})
+		require.NoError(t, err)
+		assert.Contains(t, c.SQL, dedup)
+		assert.Contains(t, c.SQL, hideSpam)
+		assert.Empty(t, c.Args, "view predicates carry no bound args")
+	})
+
+	t.Run("fts shape carries the predicates too", func(t *testing.T) {
+		q, _ := Parse("subject:invoice")
+		c, err := q.Compile(Options{Dedup: true, HideSpam: true})
+		require.NoError(t, err)
+		assert.Contains(t, c.SQL, "messages_fts MATCH ?")
+		assert.Contains(t, c.SQL, dedup)
+		assert.Contains(t, c.SQL, hideSpam)
+		assert.Equal(t, []any{`subject : "invoice"`}, c.Args)
+	})
+
+	t.Run("explicit in:spam suppresses HideSpam and dedup", func(t *testing.T) {
+		q, _ := Parse("in:spam")
+		c, err := q.Compile(Options{Dedup: true, HideSpam: true})
+		require.NoError(t, err)
+		assert.NotContains(t, c.SQL, "type = 'spam'", "the spam-hiding predicate must be dropped")
+		assert.NotContains(t, c.SQL, "GROUP BY message_id", "dedup is dropped for a folder-scoped query")
+		assert.Contains(t, c.SQL, "m.folder_id IN (SELECT id FROM folders WHERE type = ?)")
+		assert.Equal(t, []any{"spam"}, c.Args)
+	})
+
+	t.Run("negated -in:spam keeps HideSpam", func(t *testing.T) {
+		q, _ := Parse("-in:spam")
+		c, err := q.Compile(Options{Dedup: true, HideSpam: true})
+		require.NoError(t, err)
+		assert.Contains(t, c.SQL, hideSpam)
+	})
+
+	t.Run("a positive folder filter suppresses dedup", func(t *testing.T) {
+		q, _ := Parse("in:inbox")
+		c, err := q.Compile(Options{Dedup: true, HideSpam: true})
+		require.NoError(t, err)
+		assert.NotContains(t, c.SQL, "GROUP BY message_id",
+			"dedup is unnecessary and harmful when already scoped to one folder")
+	})
+}
+
 func TestSearchFolderE2E(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)

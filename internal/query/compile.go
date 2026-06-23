@@ -40,6 +40,13 @@ type Options struct {
 	// Now is the reference time used to resolve relative date filters such as
 	// newer:7d. When zero, time.Now() is used.
 	Now time.Time
+	// Dedup collapses messages that appear in more than one folder (e.g. Gmail/
+	// Proton "All Mail" duplicates) to a single row per Message-ID.
+	Dedup bool
+	// HideSpam excludes every message whose Message-ID appears in a spam-type
+	// folder, regardless of which folder a given row belongs to. This hides spam
+	// even when a copy also lives in "All Mail".
+	HideSpam bool
 }
 
 // Compiled is the result of compiling a Query into SQL.
@@ -98,6 +105,14 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 	posExpr := strings.Join(p.pos, " AND ")
 	negExpr := strings.Join(p.neg, " OR ")
 
+	// A positive folder filter (e.g. in:spam) already scopes the result to a
+	// single folder, where no cross-folder duplicates exist, so dedup is both
+	// unnecessary and harmful (its global representative may live in another
+	// folder). An explicit in:spam likewise overrides the default spam hiding.
+	dedup := opts.Dedup && !p.folderRequested
+	hideSpam := opts.HideSpam && !p.spamRequested
+	extra := viewConditions(dedup, hideSpam)
+
 	var b strings.Builder
 	var args []any
 
@@ -115,6 +130,10 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 			b.WriteString(c)
 			args = append(args, p.condArgs[i])
 		}
+		for _, ec := range extra {
+			b.WriteString(" AND ")
+			b.WriteString(ec)
+		}
 		// m.id is a stable tiebreaker so LIMIT/OFFSET pagination doesn't skip or
 		// duplicate rows when ranks are equal.
 		b.WriteString(" ORDER BY rank, m.id")
@@ -131,6 +150,7 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 		conds = append(conds, fmt.Sprintf("m.rowid NOT IN (SELECT rowid FROM %s WHERE %s MATCH ?)", tableFTS, tableFTS))
 		condArgs = append(condArgs, negExpr)
 	}
+	conds = append(conds, extra...)
 	if len(conds) > 0 {
 		b.WriteString(" WHERE ")
 		b.WriteString(strings.Join(conds, " AND "))
@@ -141,13 +161,38 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 	return &Compiled{SQL: b.String(), Args: args, FTSMatch: ""}, nil
 }
 
+// viewConditions returns extra WHERE predicates for the "view" options (spam
+// hiding and deduplication). They are self-contained SQL with no bound
+// parameters, so they slot into either query shape without disturbing the order
+// of the positional arguments. Rows with no Message-ID are always kept (they
+// cannot be matched to a duplicate or a spam copy by identity).
+func viewConditions(dedup, hideSpam bool) []string {
+	var ex []string
+	if hideSpam {
+		ex = append(ex, fmt.Sprintf(
+			"(m.message_id IS NULL OR m.message_id = '' OR m.message_id NOT IN "+
+				"(SELECT message_id FROM %s WHERE message_id IS NOT NULL AND message_id <> '' "+
+				"AND folder_id IN (SELECT id FROM %s WHERE type = 'spam')))",
+			tableMessages, tableFolders))
+	}
+	if dedup {
+		ex = append(ex, fmt.Sprintf(
+			"(m.message_id IS NULL OR m.message_id = '' OR m.rowid IN "+
+				"(SELECT MIN(rowid) FROM %s WHERE message_id IS NOT NULL AND message_id <> '' GROUP BY message_id))",
+			tableMessages))
+	}
+	return ex
+}
+
 // parts holds the pieces collected from the AST before assembling SQL.
 type parts struct {
-	pos      []string  // positive FTS sub-expressions
-	neg      []string  // negated FTS sub-expressions
-	conds    []string  // non-FTS WHERE conditions, e.g. "m.is_read = ?"
-	condArgs []any     // bound args matching conds
-	now      time.Time // reference time for relative date filters
+	pos             []string  // positive FTS sub-expressions
+	neg             []string  // negated FTS sub-expressions
+	conds           []string  // non-FTS WHERE conditions, e.g. "m.is_read = ?"
+	condArgs        []any     // bound args matching conds
+	now             time.Time // reference time for relative date filters
+	folderRequested bool      // a positive in:<folder> term is present
+	spamRequested   bool      // a positive in:spam term is present
 }
 
 // matchExpr combines the positive and negative FTS parts into a single MATCH
@@ -233,6 +278,12 @@ func (p *parts) addFolder(folderType string, negate bool) {
 	op := "IN"
 	if negate {
 		op = "NOT IN"
+	}
+	if !negate {
+		p.folderRequested = true
+		if folderType == "spam" {
+			p.spamRequested = true
+		}
 	}
 	p.conds = append(p.conds, fmt.Sprintf("m.folder_id %s (SELECT id FROM %s WHERE type = ?)", op, tableFolders))
 	p.condArgs = append(p.condArgs, folderType)

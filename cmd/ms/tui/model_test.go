@@ -53,7 +53,7 @@ func newTestStore(t *testing.T) *store.Store {
 	stmts := []string{
 		`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`,
 		`CREATE TABLE messages (
-			id TEXT PRIMARY KEY, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
+			id TEXT PRIMARY KEY, message_id TEXT, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
 			to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
 			date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
 			has_attachments INTEGER DEFAULT 0)`,
@@ -61,9 +61,9 @@ func newTestStore(t *testing.T) *store.Store {
 			subject, from_name, from_address, to_text, snippet, body_text,
 			content=messages, content_rowid=rowid)`,
 		`INSERT INTO folders (id, type) VALUES ('f-inbox','inbox'), ('f-sent','sent')`,
-		`INSERT INTO messages (id, folder_id, subject, from_name, from_address, snippet, body_text, date, is_read, is_flagged, has_attachments) VALUES
-			('m1','f-inbox','Invoice 2024','Bob Smith','bob@acme.com','your invoice','The full invoice body text.','2024-01-15 09:30:00',0,1,1),
-			('m2','f-sent','Meeting notes','Carol','carol@work.com','standup','Agenda items here.','2024-02-20 14:00:00',1,0,0)`,
+		`INSERT INTO messages (id, message_id, folder_id, subject, from_name, from_address, snippet, body_text, date, is_read, is_flagged, has_attachments) VALUES
+			('m1','<m1@x>','f-inbox','Invoice 2024','Bob Smith','bob@acme.com','your invoice','The full invoice body text.','2024-01-15 09:30:00',0,1,1),
+			('m2','<m2@x>','f-sent','Meeting notes','Carol','carol@work.com','standup','Agenda items here.','2024-02-20 14:00:00',1,0,0)`,
 		`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
 			SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`,
 	}
@@ -87,8 +87,12 @@ func newTestStoreN(t *testing.T, n int) *store.Store {
 
 	w, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
+	_, err = w.Exec(`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`)
+	require.NoError(t, err)
+	_, err = w.Exec(`INSERT INTO folders (id, type) VALUES ('f-inbox','inbox')`)
+	require.NoError(t, err)
 	_, err = w.Exec(`CREATE TABLE messages (
-		id TEXT PRIMARY KEY, subject TEXT, from_name TEXT, from_address TEXT,
+		id TEXT PRIMARY KEY, message_id TEXT, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
 		to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
 		date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
 		has_attachments INTEGER DEFAULT 0)`)
@@ -102,8 +106,8 @@ func newTestStoreN(t *testing.T, n int) *store.Store {
 		id := fmt.Sprintf("m%02d", i)
 		date := fmt.Sprintf("2024-01-%02d 10:00:00", i)
 		_, err = w.Exec(
-			`INSERT INTO messages (id, subject, from_name, from_address, snippet, body_text, date) VALUES (?,?,?,?,?,?,?)`,
-			id, fmt.Sprintf("message %02d", i), "Sender", "s@acme.com", "snippet", "body", date)
+			`INSERT INTO messages (id, message_id, folder_id, subject, from_name, from_address, snippet, body_text, date) VALUES (?,?,?,?,?,?,?,?,?)`,
+			id, "<"+id+"@x>", "f-inbox", fmt.Sprintf("message %02d", i), "Sender", "s@acme.com", "snippet", "body", date)
 		require.NoError(t, err)
 	}
 	_, err = w.Exec(`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
@@ -420,4 +424,159 @@ func TestModelScrolling(t *testing.T) {
 	m.moveCursor(-1000)
 	assert.Equal(t, 0, m.cursor)
 	assert.Equal(t, 0, m.top)
+}
+
+// newDupSpamStore mimics a Gmail/Proton mailbox where an "All Mail" (archive)
+// folder holds a copy of every message. Three logical messages:
+//
+//	A (<a@x>): in Inbox AND All Mail   — normal mail, duplicated
+//	B (<b@x>): in Spam  AND All Mail   — spam, duplicated
+//	C (<c@x>): in All Mail only         — archived mail
+//
+// Rows are inserted Inbox/Spam first so the lowest rowid (the dedup
+// representative) is the "real" folder rather than the All Mail copy.
+func newDupSpamStore(t *testing.T) *store.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "melia.db")
+	w, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	stmts := []string{
+		`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`,
+		`CREATE TABLE messages (
+			id TEXT PRIMARY KEY, message_id TEXT, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
+			to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
+			date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+			has_attachments INTEGER DEFAULT 0)`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(
+			subject, from_name, from_address, to_text, snippet, body_text,
+			content=messages, content_rowid=rowid)`,
+		`INSERT INTO folders (id, type) VALUES ('f-inbox','inbox'), ('f-spam','spam'), ('f-all','archive')`,
+		`INSERT INTO messages (id, message_id, folder_id, subject, snippet, body_text, from_address, date) VALUES
+			('a-inbox','<a@x>','f-inbox','Hello A','hi a','body a','a@x','2024-02-01 10:00:00'),
+			('b-spam', '<b@x>','f-spam', 'Win prize','win','spam body','win@x','2024-02-02 10:00:00'),
+			('a-all',  '<a@x>','f-all',  'Hello A','hi a','body a','a@x','2024-02-01 10:00:00'),
+			('b-all',  '<b@x>','f-all',  'Win prize','win','spam body','win@x','2024-02-02 10:00:00'),
+			('c-all',  '<c@x>','f-all',  'Archived C','arch','body c','c@x','2024-02-03 10:00:00')`,
+		`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
+			SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`,
+	}
+	for _, s := range stmts {
+		_, err := w.Exec(s)
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	st, err := store.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func resultIDs(m *model) []string {
+	out := make([]string, len(m.results))
+	for i, r := range m.results {
+		out[i] = r.ID
+	}
+	return out
+}
+
+func TestSpamHiddenAndDeduplicated(t *testing.T) {
+	st := newDupSpamStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	loadFirstPage(t, m, "")
+	// A and C shown once each (dedup keeps the lowest-rowid copy); B is spam and
+	// hidden by identity, so neither its Spam nor its All Mail copy appears.
+	assert.ElementsMatch(t, []string{"a-inbox", "c-all"}, resultIDs(m))
+}
+
+func TestIncludeSpamStillDeduplicates(t *testing.T) {
+	st := newDupSpamStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.includeSpam = true
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	loadFirstPage(t, m, "")
+	// Spam now included, but each message is still shown once.
+	assert.ElementsMatch(t, []string{"a-inbox", "b-spam", "c-all"}, resultIDs(m))
+}
+
+func TestSpamHiddenEvenWhenQueryMatches(t *testing.T) {
+	st := newDupSpamStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	// A search that matches the spam body must surface neither copy of it.
+	loadFirstPage(t, m, "prize")
+	assert.Empty(t, resultIDs(m), "spam stays hidden even when a query matches it")
+}
+
+func TestExplicitInSpamShowsSpam(t *testing.T) {
+	st := newDupSpamStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme) // spam hidden by default
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	// Explicitly asking for the spam folder overrides the default hiding.
+	loadFirstPage(t, m, "in:spam")
+	assert.Equal(t, []string{"b-spam"}, resultIDs(m), "in:spam should show spam despite the default filter")
+}
+
+func TestExplicitNotInSpamExcludesSpam(t *testing.T) {
+	st := newDupSpamStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	loadFirstPage(t, m, "-in:spam")
+	assert.ElementsMatch(t, []string{"a-inbox", "c-all"}, resultIDs(m), "-in:spam excludes spam (incl. its All Mail copy)")
+}
+
+// newAllMailFirstStore inserts each message's All Mail copy *before* its real
+// folder copy, so the global MIN(rowid) dedup representative is the All Mail row.
+func newAllMailFirstStore(t *testing.T) *store.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "melia.db")
+	w, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	stmts := []string{
+		`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`,
+		`CREATE TABLE messages (
+			id TEXT PRIMARY KEY, message_id TEXT, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
+			to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
+			date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+			has_attachments INTEGER DEFAULT 0)`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(
+			subject, from_name, from_address, to_text, snippet, body_text,
+			content=messages, content_rowid=rowid)`,
+		`INSERT INTO folders (id, type) VALUES ('f-spam','spam'), ('f-all','archive')`,
+		// All Mail copies first (lower rowid), then the Spam-folder copies.
+		`INSERT INTO messages (id, message_id, folder_id, subject, snippet, body_text, from_address, date) VALUES
+			('s1-all', '<s1@x>','f-all', 'Spam one','s1','body s1','x@x','2024-02-01 10:00:00'),
+			('s2-all', '<s2@x>','f-all', 'Spam two','s2','body s2','x@x','2024-02-02 10:00:00'),
+			('s1-spam','<s1@x>','f-spam','Spam one','s1','body s1','x@x','2024-02-01 10:00:00'),
+			('s2-spam','<s2@x>','f-spam','Spam two','s2','body s2','x@x','2024-02-02 10:00:00')`,
+		`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
+			SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`,
+	}
+	for _, s := range stmts {
+		_, err := w.Exec(s)
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	st, err := store.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func TestInSpamListsEverySpam(t *testing.T) {
+	st := newAllMailFirstStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+
+	// in:spam must list every Spam-folder message, not only those whose dedup
+	// representative happens to be the spam copy.
+	loadFirstPage(t, m, "in:spam")
+	assert.ElementsMatch(t, []string{"s1-spam", "s2-spam"}, resultIDs(m))
 }

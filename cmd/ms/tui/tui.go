@@ -36,7 +36,11 @@ query may be supplied on the command line.
 While browsing the list, Ctrl+R reloads, u filters to unread messages and s to
 sent messages. In a message, n/p (or the arrow keys) move to the next/previous
 message and PgUp/PgDn scroll the body. Results load automatically as you scroll
-and refresh on a timer.`,
+and refresh on a timer.
+
+Messages are de-duplicated across folders — a message that also has a copy in a
+Gmail/Proton "All Mail" folder is shown once — and the spam folder is hidden by
+default; pass --include-spam to show spam too.`,
 	Flags: []cli.Flag{
 		&cli.IntFlag{
 			Name:    "limit",
@@ -54,6 +58,10 @@ and refresh on a timer.`,
 			Name:  "reload",
 			Value: defaultReloadInterval,
 			Usage: "auto-reload interval (e.g. 30s, 2m; 0 to disable)",
+		},
+		&cli.BoolFlag{
+			Name:  "include-spam",
+			Usage: "include messages in the spam folder (hidden by default)",
 		},
 		&cli.BoolFlag{
 			Name:  "actions",
@@ -93,6 +101,7 @@ and refresh on a timer.`,
 
 		initial := strings.Join(cmd.Args().Slice(), " ")
 		m := newModel(st, cmd.Int("limit"), cmd.Duration("reload"), initial, th)
+		m.includeSpam = cmd.Bool("include-spam")
 		if cmd.Bool("actions") {
 			enableTUIActions(m, &actions.Runner{
 				Dir:     cmd.String("actions-dir"),
@@ -133,6 +142,9 @@ type model struct {
 	pageSize int
 	theme    theme
 	reload   time.Duration
+
+	// includeSpam disables the default exclusion of the spam folder.
+	includeSpam bool
 
 	width  int
 	height int
@@ -222,11 +234,12 @@ type actionsRanMsg struct {
 	err   error
 }
 
-// search runs the query and wraps the rows with wrap, off the UI goroutine.
+// search runs the query and wraps the rows with wrap, off the UI goroutine. It
+// uses the deduplicated, spam-filtered view (see store.SearchView).
 func (m *model) search(q string, limit, offset int, wrap func([]store.Message, error) tea.Msg) tea.Cmd {
-	st := m.store
+	st, includeSpam := m.store, m.includeSpam
 	return func() tea.Msg {
-		res, err := st.Search(q, limit, offset)
+		res, err := st.SearchView(q, limit, offset, includeSpam)
 		return wrap(res, err)
 	}
 }
