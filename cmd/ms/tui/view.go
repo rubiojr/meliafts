@@ -124,7 +124,7 @@ func (m *model) browseStatus() string {
 	if !m.loadedAll {
 		count += "+" // more results available below
 	}
-	hint := "↑↓ move · ENTER open · ^R reload · / edit · q quit"
+	hint := "↑↓ move · ENTER open · u unread · s sent · ^R reload · / edit · q quit"
 	if m.loadingMore {
 		hint = "loading more… · " + hint
 	}

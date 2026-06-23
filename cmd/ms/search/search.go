@@ -42,6 +42,10 @@ Date filters (value is a relative duration or an absolute date):
   7d / 7days, 2w / 2weeks, 1m / 1month, 1y / 1year, 12h / 12hours —
   or an absolute date such as 2024-01-31 or 2024/01/31.
 
+Folder filter:
+  in:<folder>         restrict to a folder (alias: folder:); <folder> is one of
+                      inbox, sent, drafts, trash, spam (e.g. in:sent)
+
 Any other word is searched across all text columns. Quote phrases with
 double quotes, prefix-match with a trailing '*', and negate any term with a
 leading '-'. Because '-' also starts a flag, place '--' before any query

@@ -28,7 +28,10 @@ var Command = &cli.Command{
 The same Gmail-style query language as 'ms search' is supported. Type a query,
 press Enter to run it, use the arrow keys to browse results and Enter to read a
 message. Press Esc to step back and q (or Ctrl+C) to quit. An optional initial
-query may be supplied on the command line.`,
+query may be supplied on the command line.
+
+While browsing the list, Ctrl+R reloads, u filters to unread messages and s to
+sent messages. Results load automatically as you scroll and refresh on a timer.`,
 	Flags: []cli.Flag{
 		&cli.IntFlag{
 			Name:    "limit",
@@ -364,10 +367,23 @@ func (m *model) keyList(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.loadDetail(m.results[m.cursor].ID)
 		}
 		return m, nil
+	case "u":
+		return m, m.applyQuickFilter("unread:")
+	case "s":
+		return m, m.applyQuickFilter("in:sent")
 	default:
 		m.navigateList(k.String())
 		return m, m.maybeFetchMore()
 	}
+}
+
+// applyQuickFilter replaces the query with q, reflects it in the search input,
+// and loads the first page. Used by the list-mode shortcuts (u, s).
+func (m *model) applyQuickFilter(q string) tea.Cmd {
+	m.query = q
+	m.input.SetValue(q)
+	m.loading = true
+	return m.firstPage(false)
 }
 
 // navigateList moves the list cursor in response to a navigation key.

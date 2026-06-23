@@ -57,6 +57,15 @@ type Flag struct {
 
 func (*Flag) isNode() {}
 
+// Folder is a condition on the message's folder, matching messages whose folder
+// has the given type (one of inbox, sent, drafts, trash, spam). It compiles to a
+// subquery against the folders table.
+type Folder struct {
+	Type string
+}
+
+func (*Folder) isNode() {}
+
 // Date is a condition on the messages.date column, for example "newer than one
 // month" or "before 2024-01-01". Op is the SQL comparison operator (">=" or
 // "<"). Exactly one of At or Rel describes the cut-off:

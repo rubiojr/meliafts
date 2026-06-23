@@ -11,6 +11,7 @@ import (
 const (
 	tableMessages = "messages"
 	tableFTS      = "messages_fts"
+	tableFolders  = "folders"
 )
 
 // DefaultColumns is the default SELECT list. Every column is qualified with the
@@ -185,6 +186,8 @@ func collect(n Node, p *parts) error {
 		p.addFlag(v)
 	case *Date:
 		p.addDate(v.Op, v.At, v.Rel)
+	case *Folder:
+		p.addFolder(v.Type, false)
 	case *Not:
 		return collectNegated(v.Child, p)
 	case *And:
@@ -211,6 +214,8 @@ func collectNegated(child Node, p *parts) error {
 		p.condArgs = append(p.condArgs, 1-inner.Value)
 	case *Date:
 		p.addDate(flipDateOp(inner.Op), inner.At, inner.Rel)
+	case *Folder:
+		p.addFolder(inner.Type, true)
 	default:
 		return fmt.Errorf("unsupported negated node %T", child)
 	}
@@ -221,6 +226,16 @@ func collectNegated(child Node, p *parts) error {
 func (p *parts) addFlag(f *Flag) {
 	p.conds = append(p.conds, fmt.Sprintf("m.%s = ?", f.Column))
 	p.condArgs = append(p.condArgs, f.Value)
+}
+
+// addFolder appends a folder-type condition via a subquery on the folders table.
+func (p *parts) addFolder(folderType string, negate bool) {
+	op := "IN"
+	if negate {
+		op = "NOT IN"
+	}
+	p.conds = append(p.conds, fmt.Sprintf("m.folder_id %s (SELECT id FROM %s WHERE type = ?)", op, tableFolders))
+	p.condArgs = append(p.condArgs, folderType)
 }
 
 // addDate appends a date condition, resolving a relative spec against p.now.

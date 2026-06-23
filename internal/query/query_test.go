@@ -134,6 +134,8 @@ func TestParseErrors(t *testing.T) {
 		{"invalid bool", "unread:maybe", "invalid boolean value"},
 		{"invalid date", "after:soon", "invalid date or duration"},
 		{"empty date", "newer:", "requires a date or duration"},
+		{"unknown folder", "in:archive", "unknown folder"},
+		{"empty folder", "in:", "requires a folder"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -142,6 +144,88 @@ func TestParseErrors(t *testing.T) {
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
+}
+
+func TestCompileFolder(t *testing.T) {
+	t.Run("folder only", func(t *testing.T) {
+		q, err := Parse("in:sent")
+		require.NoError(t, err)
+		c, err := q.Compile(Options{})
+		require.NoError(t, err)
+		assert.Equal(t,
+			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
+				"FROM messages m WHERE m.folder_id IN (SELECT id FROM folders WHERE type = ?) ORDER BY m.date DESC, m.id DESC",
+			c.SQL)
+		assert.Equal(t, []any{"sent"}, c.Args)
+	})
+
+	t.Run("fts combined with folder", func(t *testing.T) {
+		q, err := Parse("subject:invoice in:sent")
+		require.NoError(t, err)
+		c, err := q.Compile(Options{})
+		require.NoError(t, err)
+		assert.Contains(t, c.SQL, "WHERE messages_fts MATCH ? AND m.folder_id IN (SELECT id FROM folders WHERE type = ?)")
+		assert.Equal(t, []any{`subject : "invoice"`, "sent"}, c.Args)
+	})
+
+	t.Run("negated folder", func(t *testing.T) {
+		q, err := Parse("-in:trash")
+		require.NoError(t, err)
+		c, err := q.Compile(Options{})
+		require.NoError(t, err)
+		assert.Contains(t, c.SQL, "m.folder_id NOT IN (SELECT id FROM folders WHERE type = ?)")
+		assert.Equal(t, []any{"trash"}, c.Args)
+	})
+}
+
+func TestSearchFolderE2E(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`,
+		`CREATE TABLE messages (id TEXT PRIMARY KEY, folder_id TEXT, subject TEXT,
+			from_name TEXT, from_address TEXT, to_text TEXT, snippet TEXT, body_text TEXT,
+			date DATETIME NOT NULL, is_read INTEGER, is_flagged INTEGER, has_attachments INTEGER)`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(subject, from_name, from_address, to_text, snippet, body_text, content=messages, content_rowid=rowid)`,
+		`INSERT INTO folders (id, type) VALUES ('fi','inbox'), ('fs','sent')`,
+		`INSERT INTO messages (id, folder_id, subject, snippet, body_text, date, is_read, is_flagged, has_attachments) VALUES
+			('a','fi','Inbox hello','hi','body one','2024-01-01',0,0,0),
+			('b','fs','Sent reply','re','body two','2024-02-01',1,0,0),
+			('c','fs','Sent invoice','inv','body three','2024-03-01',1,0,0)`,
+		`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
+			SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`,
+	}
+	for _, s := range stmts {
+		_, err := db.Exec(s)
+		require.NoError(t, err)
+	}
+
+	run := func(qs string) []string {
+		t.Helper()
+		q, err := Parse(qs)
+		require.NoError(t, err)
+		c, err := q.Compile(Options{})
+		require.NoError(t, err)
+		rows, err := db.Query(c.SQL, c.Args...)
+		require.NoError(t, err, "exec %q -> %s", qs, c.SQL)
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id, date, su, sn string
+			var fn, fa sql.NullString
+			var r, f, a int
+			require.NoError(t, rows.Scan(&id, &date, &r, &f, &a, &fn, &fa, &su, &sn))
+			ids = append(ids, id)
+		}
+		return ids
+	}
+
+	assert.ElementsMatch(t, []string{"b", "c"}, run("in:sent"))
+	assert.ElementsMatch(t, []string{"a"}, run("in:inbox"))
+	assert.ElementsMatch(t, []string{"a"}, run("-in:sent"))
+	assert.ElementsMatch(t, []string{"c"}, run("in:sent subject:invoice"))
 }
 
 func TestParseRelSpec(t *testing.T) {

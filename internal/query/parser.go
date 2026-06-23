@@ -23,45 +23,75 @@ func nodeFromToken(tk token) (Node, error) {
 	return textNode(nil, value, tk.quoted, tk.negated), nil
 }
 
-// fieldNode builds a node for a `field:value` token, dispatching on whether the
-// field is a full-text operator, a boolean flag operator, or unknown.
+// fieldNode builds a node for a `field:value` token, dispatching to the matching
+// operator family (full-text, boolean flag, date, folder) or reporting an
+// unknown field.
 func fieldNode(tk token) (Node, error) {
 	if f, ok := ftsFields[tk.field]; ok {
-		value := strings.TrimSpace(tk.value)
-		if value == "" {
-			return nil, fmt.Errorf("field %q requires a value", tk.field)
-		}
-		return textNode(f.columns, value, tk.quoted, tk.negated), nil
+		return ftsFieldNode(tk, f)
 	}
-
 	if ff, ok := flagFields[tk.field]; ok {
-		want, err := parseFlagValue(tk.value)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", tk.field, err)
-		}
-		if tk.negated {
-			want = !want
-		}
-		value := ff.presentValue
-		if !want {
-			// Columns are 0/1, so the "absent" value is the complement.
-			value = 1 - ff.presentValue
-		}
-		return &Flag{Column: ff.column, Value: value}, nil
+		return flagFieldNode(tk, ff)
 	}
-
 	if op, ok := dateOps[tk.field]; ok {
-		at, rel, err := parseWhen(tk.value)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", tk.field, err)
-		}
-		if tk.negated {
-			op = flipDateOp(op)
-		}
-		return &Date{Op: op, At: at, Rel: rel}, nil
+		return dateFieldNode(tk, op)
 	}
-
+	if folderOps[tk.field] {
+		return folderNode(tk)
+	}
 	return nil, fmt.Errorf("unknown field: %q", tk.field)
+}
+
+func ftsFieldNode(tk token, f ftsField) (Node, error) {
+	value := strings.TrimSpace(tk.value)
+	if value == "" {
+		return nil, fmt.Errorf("field %q requires a value", tk.field)
+	}
+	return textNode(f.columns, value, tk.quoted, tk.negated), nil
+}
+
+func flagFieldNode(tk token, ff flagField) (Node, error) {
+	want, err := parseFlagValue(tk.value)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", tk.field, err)
+	}
+	if tk.negated {
+		want = !want
+	}
+	value := ff.presentValue
+	if !want {
+		// Columns are 0/1, so the "absent" value is the complement.
+		value = 1 - ff.presentValue
+	}
+	return &Flag{Column: ff.column, Value: value}, nil
+}
+
+func dateFieldNode(tk token, op string) (Node, error) {
+	at, rel, err := parseWhen(tk.value)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", tk.field, err)
+	}
+	if tk.negated {
+		op = flipDateOp(op)
+	}
+	return &Date{Op: op, At: at, Rel: rel}, nil
+}
+
+// folderNode builds a *Folder (optionally wrapped in *Not) for an in:/folder:
+// token, validating the folder type.
+func folderNode(tk token) (Node, error) {
+	typ := strings.ToLower(strings.TrimSpace(tk.value))
+	if typ == "" {
+		return nil, fmt.Errorf("%s requires a folder (%s)", tk.field, strings.Join(folderTypeList, ", "))
+	}
+	if !isFolderType(typ) {
+		return nil, fmt.Errorf("unknown folder %q (want %s)", typ, strings.Join(folderTypeList, ", "))
+	}
+	var n Node = &Folder{Type: typ}
+	if tk.negated {
+		n = &Not{Child: n}
+	}
+	return n, nil
 }
 
 // textNode builds a *Match (optionally wrapped in *Not) for the given columns

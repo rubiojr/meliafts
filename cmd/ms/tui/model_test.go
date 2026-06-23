@@ -51,17 +51,19 @@ func newTestStore(t *testing.T) *store.Store {
 	w, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	stmts := []string{
+		`CREATE TABLE folders (id TEXT PRIMARY KEY, type TEXT)`,
 		`CREATE TABLE messages (
-			id TEXT PRIMARY KEY, subject TEXT, from_name TEXT, from_address TEXT,
+			id TEXT PRIMARY KEY, folder_id TEXT, subject TEXT, from_name TEXT, from_address TEXT,
 			to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
 			date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
 			has_attachments INTEGER DEFAULT 0)`,
 		`CREATE VIRTUAL TABLE messages_fts USING fts5(
 			subject, from_name, from_address, to_text, snippet, body_text,
 			content=messages, content_rowid=rowid)`,
-		`INSERT INTO messages (id, subject, from_name, from_address, snippet, body_text, date, is_read, is_flagged, has_attachments) VALUES
-			('m1','Invoice 2024','Bob Smith','bob@acme.com','your invoice','The full invoice body text.','2024-01-15 09:30:00',0,1,1),
-			('m2','Meeting notes','Carol','carol@work.com','standup','Agenda items here.','2024-02-20 14:00:00',1,0,0)`,
+		`INSERT INTO folders (id, type) VALUES ('f-inbox','inbox'), ('f-sent','sent')`,
+		`INSERT INTO messages (id, folder_id, subject, from_name, from_address, snippet, body_text, date, is_read, is_flagged, has_attachments) VALUES
+			('m1','f-inbox','Invoice 2024','Bob Smith','bob@acme.com','your invoice','The full invoice body text.','2024-01-15 09:30:00',0,1,1),
+			('m2','f-sent','Meeting notes','Carol','carol@work.com','standup','Agenda items here.','2024-02-20 14:00:00',1,0,0)`,
 		`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
 			SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`,
 	}
@@ -210,6 +212,30 @@ func TestReloadUsesActiveQuery(t *testing.T) {
 	runCmd(t, m, cmd)
 	// Reload re-ran the active query (""), not the half-typed input.
 	assert.Len(t, m.results, 2)
+}
+
+func TestQuickFilters(t *testing.T) {
+	st := newTestStore(t) // m1: inbox+unread, m2: sent+read
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	loadFirstPage(t, m, "")
+	m.state = stateList
+	require.Len(t, m.results, 2)
+
+	// 'u' filters to unread messages.
+	_, cmd := m.Update(key("u"))
+	drain(t, m, cmd)
+	assert.Equal(t, "unread:", m.query)
+	assert.Equal(t, "unread:", m.input.Value())
+	require.Len(t, m.results, 1)
+	assert.Equal(t, "m1", m.results[0].ID)
+
+	// 's' filters to sent messages.
+	_, cmd = m.Update(key("s"))
+	drain(t, m, cmd)
+	assert.Equal(t, "in:sent", m.query)
+	require.Len(t, m.results, 1)
+	assert.Equal(t, "m2", m.results[0].ID)
 }
 
 func TestEndlessPagination(t *testing.T) {

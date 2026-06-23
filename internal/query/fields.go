@@ -70,3 +70,23 @@ func flipDateOp(op string) string {
 	}
 	return ">="
 }
+
+// folderOps are the operators that filter by folder/location, e.g. in:sent.
+var folderOps = map[string]bool{
+	"in":     true,
+	"folder": true,
+}
+
+// folderTypeList is the set of folder types accepted by in:/folder:, in a
+// stable order for help and error messages. It mirrors the folders.type values.
+var folderTypeList = []string{"inbox", "sent", "drafts", "trash", "spam"}
+
+// isFolderType reports whether t is a valid folder type.
+func isFolderType(t string) bool {
+	for _, v := range folderTypeList {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
