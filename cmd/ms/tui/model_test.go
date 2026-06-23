@@ -13,6 +13,35 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// testTheme is the default theme used across model tests.
+var testTheme = mustTheme(defaultTheme)
+
+func mustTheme(name string) theme {
+	th, err := newTheme(name)
+	if err != nil {
+		panic(err)
+	}
+	return th
+}
+
+func TestThemes(t *testing.T) {
+	names := themeNames()
+	assert.Subset(t, names, []string{"amber", "green", "synthwave", "ice"})
+
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			th, err := newTheme(name)
+			require.NoError(t, err)
+			assert.NotNil(t, th.bg)
+			// A styled string should be produced for each theme.
+			assert.NotEmpty(t, th.subject.Render("x"))
+		})
+	}
+
+	_, err := newTheme("does-not-exist")
+	assert.ErrorContains(t, err, "unknown theme")
+}
+
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "melia.db")
@@ -83,7 +112,7 @@ func TestKeyStringMapping(t *testing.T) {
 
 func TestModelSearchFlow(t *testing.T) {
 	st := newTestStore(t)
-	m := newModel(st, 50, "")
+	m := newModel(st, 50, "", testTheme)
 
 	// Window size and initial (empty) search loading all messages.
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
@@ -123,7 +152,7 @@ func TestModelSearchFlow(t *testing.T) {
 
 func TestModelInvalidQuery(t *testing.T) {
 	st := newTestStore(t)
-	m := newModel(st, 50, "")
+	m := newModel(st, 50, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
 
 	m.input.SetValue("bogus:field")
@@ -137,7 +166,7 @@ func TestModelInvalidQuery(t *testing.T) {
 }
 
 func TestModelScrolling(t *testing.T) {
-	m := newModel(nil, 50, "")
+	m := newModel(nil, 50, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24}) // listHeight = 24-4 = 20
 	m.results = make([]store.Message, 100)
 	for i := range m.results {

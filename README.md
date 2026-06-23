@@ -28,3 +28,5 @@ ms tui
 ```
 
 ![](/docs/tui.png)
+
+TUI supports themes (`--theme`), `ms tui --help` to list them.

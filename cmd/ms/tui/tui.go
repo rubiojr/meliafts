@@ -31,8 +31,19 @@ query may be supplied on the command line.`,
 			Value:   200,
 			Usage:   "maximum number of results to load",
 		},
+		&cli.StringFlag{
+			Name:    "theme",
+			Aliases: []string{"t"},
+			Value:   defaultTheme,
+			Usage:   "color theme (" + strings.Join(themeNames(), ", ") + ")",
+		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
+		th, err := newTheme(cmd.String("theme"))
+		if err != nil {
+			return err
+		}
+
 		st, err := store.Open(cmd.String("db"))
 		if err != nil {
 			return err
@@ -40,7 +51,7 @@ query may be supplied on the command line.`,
 		defer st.Close()
 
 		initial := strings.Join(cmd.Args().Slice(), " ")
-		p := tea.NewProgram(newModel(st, cmd.Int("limit"), initial), tea.WithContext(ctx))
+		p := tea.NewProgram(newModel(st, cmd.Int("limit"), initial, th), tea.WithContext(ctx))
 		_, err = p.Run()
 		return err
 	},
@@ -58,6 +69,7 @@ const (
 type model struct {
 	store *store.Store
 	limit int
+	theme theme
 
 	width  int
 	height int
@@ -77,17 +89,18 @@ type model struct {
 	err     error
 }
 
-func newModel(st *store.Store, limit int, initialQuery string) *model {
+func newModel(st *store.Store, limit int, initialQuery string, th theme) *model {
 	ti := textinput.New()
 	ti.Prompt = "search › "
 	ti.Placeholder = "subject:invoice unread: newer:7d"
-	ti.SetStyles(inputStyles())
+	ti.SetStyles(th.input)
 	ti.SetValue(initialQuery)
 	ti.CharLimit = 512
 
 	return &model{
 		store:    st,
 		limit:    limit,
+		theme:    th,
 		state:    stateSearch,
 		input:    ti,
 		viewport: viewport.New(),

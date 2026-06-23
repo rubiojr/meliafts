@@ -25,7 +25,7 @@ func (m *model) View() tea.View {
 	}
 
 	v := tea.NewView(content)
-	v.BackgroundColor = colBg
+	v.BackgroundColor = m.theme.bg
 	v.AltScreen = true
 	return v
 }
@@ -47,11 +47,11 @@ func (m *model) listLines(h int) []string {
 
 	switch {
 	case m.err != nil:
-		out = append(out, " "+errStyle.Render("error: "+m.err.Error()))
+		out = append(out, " "+m.theme.err.Render("error: "+m.err.Error()))
 	case m.loading && len(m.results) == 0:
-		out = append(out, " "+emptyStyle.Render("searching…"))
+		out = append(out, " "+m.theme.empty.Render("searching…"))
 	case len(m.results) == 0:
-		out = append(out, " "+emptyStyle.Render("no messages match this query"))
+		out = append(out, " "+m.theme.empty.Render("no messages match this query"))
 	default:
 		end := min(m.top+h, len(m.results))
 		for i := m.top; i < end; i++ {
@@ -71,11 +71,11 @@ func (m *model) listRow(i int) string {
 
 	mark := "  "
 	if selected {
-		mark = cursorMark.Render("▸ ")
+		mark = m.theme.cursor.Render("▸ ")
 	}
 
 	flags := m.flagBadge(r)
-	date := itemDim.Render(fmt.Sprintf("%-16s", formatDate(r.Date)))
+	date := m.theme.itemDim.Render(fmt.Sprintf("%-16s", formatDate(r.Date)))
 	from := fmt.Sprintf("%-18s", truncate(senderShort(r), 18))
 
 	subjectW := max(4, m.width-46)
@@ -83,11 +83,11 @@ func (m *model) listRow(i int) string {
 
 	body := from + "  " + subject
 	if selected {
-		body = itemSel.Render(body)
+		body = m.theme.itemSel.Render(body)
 	} else if r.IsRead {
-		body = itemDim.Render(body)
+		body = m.theme.itemDim.Render(body)
 	} else {
-		body = itemStyle.Render(body)
+		body = m.theme.item.Render(body)
 	}
 
 	return mark + flags + " " + date + "  " + body
@@ -96,15 +96,15 @@ func (m *model) listRow(i int) string {
 func (m *model) flagBadge(r store.Message) string {
 	u, f, a := " ", " ", " "
 	if !r.IsRead {
-		u = flagUnread.Render("U")
+		u = m.theme.flagUnread.Render("U")
 	}
 	if r.IsFlagged {
-		f = flagFlagged.Render("*")
+		f = m.theme.flagFlagged.Render("*")
 	}
 	if r.HasAttachments {
-		a = flagAttach.Render("@")
+		a = m.theme.flagAttach.Render("@")
 	}
-	return bracketDim.Render("[") + u + f + a + bracketDim.Render("]")
+	return m.theme.bracket.Render("[") + u + f + a + m.theme.bracket.Render("]")
 }
 
 func (m *model) browseStatus() string {
@@ -134,9 +134,9 @@ func (m *model) detailMeta() []string {
 	d := m.detail
 	valueW := max(1, m.width-8)
 
-	subject := subjectBig.Render(truncate(firstNonEmpty(d.Subject, "(no subject)"), max(1, m.width-1)))
-	from := metaLabel.Render("From  ") + metaValue.Render(truncate(senderFull(d), valueW))
-	date := metaLabel.Render("Date  ") + metaValue.Render(truncate(formatDate(d.Date), valueW))
+	subject := m.theme.subject.Render(truncate(firstNonEmpty(d.Subject, "(no subject)"), max(1, m.width-1)))
+	from := m.theme.metaLabel.Render("From  ") + m.theme.metaValue.Render(truncate(senderFull(d), valueW))
+	date := m.theme.metaLabel.Render("Date  ") + m.theme.metaValue.Render(truncate(formatDate(d.Date), valueW))
 
 	return []string{" " + subject, " " + from, " " + date}
 }
@@ -165,24 +165,24 @@ func (m *model) renderBody(d *store.Message) string {
 		text = strings.TrimSpace(d.Snippet)
 	}
 	if text == "" {
-		return emptyStyle.Render("(this message has no readable body)")
+		return m.theme.empty.Render("(this message has no readable body)")
 	}
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
-	return bodyStyle.Width(max(10, m.width-1)).Render(text)
+	return m.theme.body.Width(max(10, m.width-1)).Render(text)
 }
 
 // --- chrome ----------------------------------------------------------------
 
 func (m *model) titleBar(sub string) string {
-	left := titleStyle.Render(" MELIA ")
+	left := m.theme.title.Render(" MELIA ")
 	avail := max(0, m.width-lipgloss.Width(left))
 	subtitle := truncate(" · "+sub, avail)
 	pad := avail - len([]rune(subtitle))
 	if pad > 0 {
 		subtitle += strings.Repeat(" ", pad)
 	}
-	return left + titleSubStyle.Render(subtitle)
+	return left + m.theme.titleSub.Render(subtitle)
 }
 
 func (m *model) inputLine() string {
@@ -190,7 +190,7 @@ func (m *model) inputLine() string {
 }
 
 func (m *model) rule() string {
-	return ruleStyle.Render(strings.Repeat("─", max(0, m.width)))
+	return m.theme.rule.Render(strings.Repeat("─", max(0, m.width)))
 }
 
 func (m *model) statusBar(s string) string {
@@ -198,7 +198,7 @@ func (m *model) statusBar(s string) string {
 	if pad := m.width - len([]rune(line)); pad > 0 {
 		line += strings.Repeat(" ", pad)
 	}
-	return statusStyle.Render(line)
+	return m.theme.status.Render(line)
 }
 
 // --- helpers ---------------------------------------------------------------
