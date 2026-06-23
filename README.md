@@ -21,6 +21,18 @@ ms search   subject:privacy isn't dead
       This is a friendly message from the Electronic Frontier Foundation. EFFector 36.3 Privacy Isn’t Dea…
 ```
 
+MeliaFTS supports Gmail style filters:
+
+```
+ms search subject:invoice unread:
+ms search sender:bob flagged: attachments:
+ms search newer:7d body:kubernetes
+ms search after:2024-01-01 older:1month from:bob
+ms search -- subject:invoice -subject:draft
+```
+
+`ms search --help` for a quick overview.
+
 ## TUI
 
 ```
