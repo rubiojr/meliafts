@@ -10,17 +10,36 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// palette is a small set of hex colors that fully describes a theme. Every
-// lipgloss style in the UI is derived from these eight roles.
+// palette describes a theme. The first eight roles form a monochrome base; the
+// optional accent roles below let "colorful" themes paint individual UI
+// elements — both result columns and the surrounding chrome (bars, rules,
+// prompt) — with their own hues. An empty accent falls back to a base role, so
+// a single-phosphor CRT theme only needs to set the base eight.
 type palette struct {
 	bg     string // screen background
-	bgAlt  string // panel / status-bar background
+	bgAlt  string // panel background
 	fg     string // primary foreground text
-	hi     string // bright highlight (selection, unread, cursor)
-	dim    string // dimmed text (read items, metadata labels)
-	low    string // faint text (rules, brackets)
-	accent string // hot accent (flagged marker)
+	hi     string // bright highlight (selection, cursor)
+	dim    string // dimmed text (read items)
+	low    string // faint text (brackets)
+	accent string // flagged marker
 	danger string // errors
+
+	// Optional result-row accents (fall back to a base role when empty).
+	sender  string // from column                 (default: fg)
+	subject string // subject column in the list  (default: fg)
+	date    string // date column                 (default: dim)
+	unread  string // unread marker               (default: hi)
+	attach  string // attachment marker           (default: dim)
+	label   string // detail meta labels          (default: dim)
+
+	// Optional chrome accents.
+	title    string // title-bar badge background  (default: fg)
+	titleAlt string // title-bar rest background    (default: title)
+	bar      string // status-bar background        (default: bgAlt)
+	barText  string // status-bar text              (default: dim)
+	rule     string // rules / dividers             (default: low)
+	prompt   string // search prompt                (default: dim)
 }
 
 // defaultTheme is used when no --theme is supplied.
@@ -28,25 +47,38 @@ const defaultTheme = "amber"
 
 // palettes holds every available theme, keyed by its flag name.
 var palettes = map[string]palette{
-	// Amber phosphor CRT: warm orange on near-black.
+	// Amber phosphor CRT: a single warm hue on near-black. Monochrome by design.
 	"amber": {
 		bg: "#160d00", bgAlt: "#2c1b04", fg: "#ffb000", hi: "#ffd982",
 		dim: "#c08218", low: "#7a5410", accent: "#ff8a1e", danger: "#ff5436",
 	},
-	// Green phosphor terminal: classic P1 green on black.
+	// Green phosphor terminal: classic single-hue P1 green on black.
 	"green": {
 		bg: "#02160a", bgAlt: "#06301a", fg: "#36ff7a", hi: "#c6ffd8",
 		dim: "#1fb151", low: "#0f6a30", accent: "#b6ff00", danger: "#ff5c5c",
 	},
-	// Synthwave: neon pink and cyan over deep indigo.
+	// Synthwave: a warm "orchid sunset" — deep plum night with an analogous
+	// spread of orchid, magenta, rose, coral and gold. Deliberately free of any
+	// blue/cyan so the chrome and the rows stay harmonious.
 	"synthwave": {
-		bg: "#1a0b2e", bgAlt: "#2d1650", fg: "#ff7edb", hi: "#fdfdff",
-		dim: "#c264d6", low: "#6d4a99", accent: "#36f9f6", danger: "#fe4450",
+		bg: "#241327", bgAlt: "#38203f", fg: "#f6e7f1", hi: "#fff4fb",
+		dim: "#b884bb", low: "#6f476f", accent: "#ff4fa3", danger: "#ff5d6c",
+		sender: "#c79bff", subject: "#ff8fc7", date: "#cf8fd6",
+		unread: "#ffcf5c", attach: "#ff9e7a", label: "#c79bff",
+		title: "#ffcf5c", titleAlt: "#ff4fa3",
+		bar: "#c77be6", barText: "#1c0f20",
+		rule: "#9a5fc4", prompt: "#ff8fc7",
 	},
-	// Ice: glacial cyan and sky blue over deep navy.
+	// Ice: a cool but varied spread over deep navy. Sky/cyan chrome frame, steel
+	// rules, glacial result columns.
 	"ice": {
 		bg: "#03121f", bgAlt: "#0a2942", fg: "#8fd6ff", hi: "#eaf7ff",
 		dim: "#5aa6d6", low: "#2f6a8f", accent: "#66f0ff", danger: "#ff7a8a",
+		sender: "#7ee8c8", subject: "#c9b3ff", date: "#9ad0ff",
+		unread: "#eaf7ff", attach: "#a6f0c6", label: "#7ee8c8",
+		title: "#66f0ff", titleAlt: "#8fd6ff",
+		bar: "#7ee8c8", barText: "#03121f",
+		rule: "#4f9fd0", prompt: "#7ee8c8",
 	},
 }
 
@@ -60,6 +92,17 @@ func themeNames() []string {
 	return names
 }
 
+// firstColor returns the first non-empty hex value as a lipgloss color, so a
+// theme can chain fallbacks (e.g. titleAlt -> title -> fg).
+func firstColor(vals ...string) color.Color {
+	for _, v := range vals {
+		if v != "" {
+			return lipgloss.Color(v)
+		}
+	}
+	return lipgloss.Color("")
+}
+
 // theme holds every lipgloss style used by the UI, pre-built from a palette.
 type theme struct {
 	bg color.Color
@@ -70,9 +113,12 @@ type theme struct {
 	rule     lipgloss.Style
 
 	cursor  lipgloss.Style
-	item    lipgloss.Style
 	itemDim lipgloss.Style
 	itemSel lipgloss.Style
+
+	sender      lipgloss.Style
+	listSubject lipgloss.Style
+	date        lipgloss.Style
 
 	flagUnread  lipgloss.Style
 	flagFlagged lipgloss.Style
@@ -101,31 +147,49 @@ func newTheme(name string) (theme, error) {
 
 func buildTheme(p palette) theme {
 	c := lipgloss.Color
-	bg, bgAlt := c(p.bg), c(p.bgAlt)
+	bg := c(p.bg)
 	fg, hi, dim, low := c(p.fg), c(p.hi), c(p.dim), c(p.low)
 	accent, danger := c(p.accent), c(p.danger)
+
+	// Chrome colors with fallbacks.
+	titleBg := firstColor(p.title, p.fg)
+	titleAltBg := firstColor(p.titleAlt, p.title, p.fg)
+	barBg := firstColor(p.bar, p.bgAlt)
+	barFg := firstColor(p.barText, p.dim)
+	ruleC := firstColor(p.rule, p.low)
+
+	// Result-row accents with fallbacks.
+	senderC := firstColor(p.sender, p.fg)
+	subjectC := firstColor(p.subject, p.fg)
+	dateC := firstColor(p.date, p.dim)
+	unreadC := firstColor(p.unread, p.hi)
+	attachC := firstColor(p.attach, p.dim)
+	labelC := firstColor(p.label, p.dim)
 
 	style := lipgloss.NewStyle
 
 	return theme{
 		bg: bg,
 
-		title:    style().Bold(true).Foreground(bg).Background(fg),
-		titleSub: style().Foreground(bg).Background(fg),
-		status:   style().Foreground(dim).Background(bgAlt),
-		rule:     style().Foreground(low),
+		title:    style().Bold(true).Foreground(bg).Background(titleBg),
+		titleSub: style().Foreground(bg).Background(titleAltBg),
+		status:   style().Foreground(barFg).Background(barBg),
+		rule:     style().Foreground(ruleC),
 
 		cursor:  style().Foreground(hi).Bold(true),
-		item:    style().Foreground(fg),
 		itemDim: style().Foreground(dim),
 		itemSel: style().Foreground(hi).Bold(true),
 
-		flagUnread:  style().Foreground(hi).Bold(true),
+		sender:      style().Foreground(senderC),
+		listSubject: style().Foreground(subjectC),
+		date:        style().Foreground(dateC),
+
+		flagUnread:  style().Foreground(unreadC).Bold(true),
 		flagFlagged: style().Foreground(accent).Bold(true),
-		flagAttach:  style().Foreground(dim),
+		flagAttach:  style().Foreground(attachC),
 		bracket:     style().Foreground(low),
 
-		metaLabel: style().Foreground(dim).Bold(true),
+		metaLabel: style().Foreground(labelC).Bold(true),
 		metaValue: style().Foreground(fg),
 		subject:   style().Foreground(hi).Bold(true),
 		body:      style().Foreground(fg),
@@ -142,7 +206,7 @@ func buildInputStyles(p palette) textinput.Styles {
 	c := lipgloss.Color
 	s := textinput.DefaultDarkStyles()
 
-	s.Focused.Prompt = lipgloss.NewStyle().Foreground(c(p.dim)).Bold(true)
+	s.Focused.Prompt = lipgloss.NewStyle().Foreground(firstColor(p.prompt, p.dim)).Bold(true)
 	s.Focused.Text = lipgloss.NewStyle().Foreground(c(p.hi))
 	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(c(p.low))
 	s.Blurred.Prompt = lipgloss.NewStyle().Foreground(c(p.low)).Bold(true)

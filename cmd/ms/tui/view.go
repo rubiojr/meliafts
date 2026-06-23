@@ -75,22 +75,27 @@ func (m *model) listRow(i int) string {
 	}
 
 	flags := m.flagBadge(r)
-	date := m.theme.itemDim.Render(fmt.Sprintf("%-16s", formatDate(r.Date)))
+	date := fmt.Sprintf("%-16s", formatDate(r.Date))
 	from := fmt.Sprintf("%-18s", truncate(senderShort(r), 18))
-
 	subjectW := max(4, m.width-46)
 	subject := truncate(firstNonEmpty(r.Subject, "(no subject)"), subjectW)
 
-	body := from + "  " + subject
-	if selected {
-		body = m.theme.itemSel.Render(body)
-	} else if r.IsRead {
-		body = m.theme.itemDim.Render(body)
-	} else {
-		body = m.theme.item.Render(body)
+	// Each column carries its own accent. Read messages collapse to a single
+	// dim tone; the selected row is uniformly bright. Unread rows show the full
+	// colorful spread (only "colorful" themes differ here — monochrome themes
+	// map every accent back to the same hue).
+	dateStyle, fromStyle, subjStyle := m.theme.date, m.theme.sender, m.theme.listSubject
+	switch {
+	case selected:
+		fromStyle, subjStyle = m.theme.itemSel, m.theme.itemSel
+	case r.IsRead:
+		dateStyle, fromStyle, subjStyle = m.theme.itemDim, m.theme.itemDim, m.theme.itemDim
 	}
 
-	return mark + flags + " " + date + "  " + body
+	return mark + flags + " " +
+		dateStyle.Render(date) + "  " +
+		fromStyle.Render(from) + "  " +
+		subjStyle.Render(subject)
 }
 
 func (m *model) flagBadge(r store.Message) string {
