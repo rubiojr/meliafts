@@ -41,4 +41,6 @@ ms tui
 
 ![](/docs/tui.png)
 
+_Note: data in the screenshot was randomly generated_
+
 TUI supports themes (`--theme`), `ms tui --help` to list them.
