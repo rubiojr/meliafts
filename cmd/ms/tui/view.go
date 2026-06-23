@@ -120,7 +120,15 @@ func (m *model) browseStatus() string {
 	if len(m.results) > 0 {
 		pos = m.cursor + 1
 	}
-	return fmt.Sprintf("%d/%d · ↑↓ move · ENTER open · ^R reload · / edit · q quit", pos, len(m.results))
+	count := fmt.Sprintf("%d/%d", pos, len(m.results))
+	if !m.loadedAll {
+		count += "+" // more results available below
+	}
+	hint := "↑↓ move · ENTER open · ^R reload · / edit · q quit"
+	if m.loadingMore {
+		hint = "loading more… · " + hint
+	}
+	return count + " · " + hint
 }
 
 // --- detail screen ---------------------------------------------------------

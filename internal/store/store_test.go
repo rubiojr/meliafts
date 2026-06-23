@@ -45,7 +45,7 @@ func TestStoreSearch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	got, err := st.Search("subject:invoice", 50)
+	got, err := st.Search("subject:invoice", 50, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "m1", got[0].ID)
@@ -55,7 +55,7 @@ func TestStoreSearch(t *testing.T) {
 	// Search populates list fields only.
 	assert.Empty(t, got[0].BodyText)
 
-	all, err := st.Search("", 50)
+	all, err := st.Search("", 50, 0)
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 }
@@ -65,7 +65,7 @@ func TestStoreSearchInvalidQuery(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 
-	_, err = st.Search("bogus:field", 50)
+	_, err = st.Search("bogus:field", 50, 0)
 	assert.ErrorContains(t, err, "unknown field")
 }
 

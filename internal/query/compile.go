@@ -114,7 +114,9 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 			b.WriteString(c)
 			args = append(args, p.condArgs[i])
 		}
-		b.WriteString(" ORDER BY rank")
+		// m.id is a stable tiebreaker so LIMIT/OFFSET pagination doesn't skip or
+		// duplicate rows when ranks are equal.
+		b.WriteString(" ORDER BY rank, m.id")
 		applyLimit(&b, &args, opts)
 		return &Compiled{SQL: b.String(), Args: args, FTSMatch: matchExpr}, nil
 	}
@@ -133,7 +135,7 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 		b.WriteString(strings.Join(conds, " AND "))
 		args = append(args, condArgs...)
 	}
-	b.WriteString(" ORDER BY m.date DESC")
+	b.WriteString(" ORDER BY m.date DESC, m.id DESC")
 	applyLimit(&b, &args, opts)
 	return &Compiled{SQL: b.String(), Args: args, FTSMatch: ""}, nil
 }

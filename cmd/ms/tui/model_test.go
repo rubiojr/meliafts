@@ -2,6 +2,7 @@ package tui
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -76,6 +77,44 @@ func newTestStore(t *testing.T) *store.Store {
 	return st
 }
 
+// newTestStoreN creates a store with n messages, ids m01..mNN and increasing
+// dates (so a date-DESC scan returns mNN first).
+func newTestStoreN(t *testing.T, n int) *store.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "melia.db")
+
+	w, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = w.Exec(`CREATE TABLE messages (
+		id TEXT PRIMARY KEY, subject TEXT, from_name TEXT, from_address TEXT,
+		to_addresses TEXT, snippet TEXT, body_text TEXT, body_html TEXT,
+		date DATETIME NOT NULL, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+		has_attachments INTEGER DEFAULT 0)`)
+	require.NoError(t, err)
+	_, err = w.Exec(`CREATE VIRTUAL TABLE messages_fts USING fts5(
+		subject, from_name, from_address, to_text, snippet, body_text,
+		content=messages, content_rowid=rowid)`)
+	require.NoError(t, err)
+
+	for i := 1; i <= n; i++ {
+		id := fmt.Sprintf("m%02d", i)
+		date := fmt.Sprintf("2024-01-%02d 10:00:00", i)
+		_, err = w.Exec(
+			`INSERT INTO messages (id, subject, from_name, from_address, snippet, body_text, date) VALUES (?,?,?,?,?,?,?)`,
+			id, fmt.Sprintf("message %02d", i), "Sender", "s@acme.com", "snippet", "body", date)
+		require.NoError(t, err)
+	}
+	_, err = w.Exec(`INSERT INTO messages_fts(rowid, subject, from_name, from_address, to_text, snippet, body_text)
+		SELECT rowid, subject, from_name, from_address, '', snippet, body_text FROM messages`)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	st, err := store.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
 func key(s string) tea.KeyPressMsg {
 	switch s {
 	case "enter":
@@ -104,6 +143,27 @@ func runCmd(t *testing.T, m *model, cmd tea.Cmd) {
 	}
 }
 
+// drain executes a command chain to completion, following each command the
+// model returns. Safe for the search/page flow (which never yields a blocking
+// timer command).
+func drain(t *testing.T, m *model, cmd tea.Cmd) {
+	t.Helper()
+	for i := 0; cmd != nil && i < 1000; i++ {
+		msg := cmd()
+		if msg == nil {
+			return
+		}
+		_, cmd = m.Update(msg)
+	}
+}
+
+// loadFirstPage seeds the model with the first page of results for q.
+func loadFirstPage(t *testing.T, m *model, q string) {
+	t.Helper()
+	m.query = q
+	drain(t, m, m.firstPage(false))
+}
+
 func TestKeyStringMapping(t *testing.T) {
 	// Guard our handler's key matching against the actual String() values.
 	assert.Equal(t, "enter", key("enter").String())
@@ -118,7 +178,7 @@ func TestReloadKeepsPosition(t *testing.T) {
 	st := newTestStore(t)
 	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	runCmd(t, m, m.runSearch("", false, false))
+	loadFirstPage(t, m, "")
 	require.Len(t, m.results, 2)
 
 	// Browse the list and select the second message.
@@ -139,7 +199,7 @@ func TestReloadUsesActiveQuery(t *testing.T) {
 	st := newTestStore(t)
 	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	runCmd(t, m, m.runSearch("", false, false)) // active query is ""
+	loadFirstPage(t, m, "") // active query is ""
 	require.Len(t, m.results, 2)
 
 	m.state = stateList
@@ -150,6 +210,36 @@ func TestReloadUsesActiveQuery(t *testing.T) {
 	runCmd(t, m, cmd)
 	// Reload re-ran the active query (""), not the half-typed input.
 	assert.Len(t, m.results, 2)
+}
+
+func TestEndlessPagination(t *testing.T) {
+	const total = 30
+	st := newTestStoreN(t, total)
+	m := newModel(st, 5, defaultReloadInterval, "", testTheme) // page size 5
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 12})         // listHeight = 8
+
+	// First load fills the viewport but not the whole result set.
+	loadFirstPage(t, m, "")
+	require.False(t, m.loadedAll, "more rows should remain after the first fill")
+	require.Less(t, len(m.results), total)
+	m.state = stateList
+
+	// Scroll to the end repeatedly; each step pulls the next page until done.
+	for i := 0; i < 100 && !m.loadedAll; i++ {
+		m.moveTo(len(m.results) - 1)
+		drain(t, m, m.maybeFetchMore())
+	}
+
+	// Everything loaded, exactly once, in stable date-descending order.
+	require.True(t, m.loadedAll)
+	require.Len(t, m.results, total)
+
+	seen := map[string]bool{}
+	for k, msg := range m.results {
+		assert.False(t, seen[msg.ID], "duplicate row %s", msg.ID)
+		seen[msg.ID] = true
+		assert.Equal(t, fmt.Sprintf("m%02d", total-k), msg.ID, "row %d out of order", k)
+	}
 }
 
 func TestScheduleReloadToggle(t *testing.T) {
@@ -166,7 +256,7 @@ func TestAutoReloadTickReArms(t *testing.T) {
 	st := newTestStore(t)
 	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	runCmd(t, m, m.runSearch("", false, false))
+	loadFirstPage(t, m, "")
 	m.state = stateList
 	m.moveTo(1)
 
@@ -185,7 +275,7 @@ func TestModelSearchFlow(t *testing.T) {
 
 	// Window size and initial (empty) search loading all messages.
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	runCmd(t, m, m.runSearch("", false, false))
+	loadFirstPage(t, m, "")
 	require.Len(t, m.results, 2)
 	assert.Equal(t, stateSearch, m.state)
 

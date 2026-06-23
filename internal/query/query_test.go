@@ -194,7 +194,7 @@ func TestCompileDate(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
-				"FROM messages m WHERE julianday(m.date) >= julianday(?) ORDER BY m.date DESC",
+				"FROM messages m WHERE julianday(m.date) >= julianday(?) ORDER BY m.date DESC, m.id DESC",
 			c.SQL)
 		assert.Equal(t, []any{"2024-02-15 12:00:00"}, c.Args)
 	})
@@ -225,7 +225,7 @@ func TestCompileDate(t *testing.T) {
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
 				"FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid "+
-				"WHERE messages_fts MATCH ? AND julianday(m.date) >= julianday(?) ORDER BY rank",
+				"WHERE messages_fts MATCH ? AND julianday(m.date) >= julianday(?) ORDER BY rank, m.id",
 			c.SQL)
 		assert.Equal(t, []any{`subject : "invoice"`, "2024-01-15 12:00:00"}, c.Args)
 	})
@@ -240,7 +240,7 @@ func TestCompileSQL(t *testing.T) {
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
 				"FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid "+
-				"WHERE messages_fts MATCH ? AND m.is_read = ? ORDER BY rank LIMIT ?",
+				"WHERE messages_fts MATCH ? AND m.is_read = ? ORDER BY rank, m.id LIMIT ?",
 			c.SQL)
 		assert.Equal(t, []any{`subject : "invoice"`, 0, 50}, c.Args)
 	})
@@ -252,7 +252,7 @@ func TestCompileSQL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
-				"FROM messages m WHERE m.is_flagged = ? ORDER BY m.date DESC",
+				"FROM messages m WHERE m.is_flagged = ? ORDER BY m.date DESC, m.id DESC",
 			c.SQL)
 		assert.Equal(t, []any{1}, c.Args)
 	})
@@ -264,7 +264,7 @@ func TestCompileSQL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
-				"FROM messages m WHERE m.rowid NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?) ORDER BY m.date DESC",
+				"FROM messages m WHERE m.rowid NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?) ORDER BY m.date DESC, m.id DESC",
 			c.SQL)
 		assert.Equal(t, []any{`"invoice"`}, c.Args)
 	})
@@ -276,7 +276,7 @@ func TestCompileSQL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			"SELECT m.id, m.date, m.is_read, m.is_flagged, m.has_attachments, m.from_name, m.from_address, m.subject, m.snippet "+
-				"FROM messages m ORDER BY m.date DESC LIMIT ?",
+				"FROM messages m ORDER BY m.date DESC, m.id DESC LIMIT ?",
 			c.SQL)
 		assert.Equal(t, []any{10}, c.Args)
 	})

@@ -112,7 +112,7 @@ func run(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer st.Close()
 
-	results, err := st.Search(queryStr, limit)
+	results, err := st.Search(queryStr, limit, 0)
 	if err != nil {
 		return err
 	}

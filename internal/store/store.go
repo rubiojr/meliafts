@@ -60,9 +60,14 @@ func (s *Store) Compile(queryStr string, limit int) (*query.Compiled, error) {
 }
 
 // Search runs a Gmail-style query and returns the matching messages with their
-// list fields populated. A limit of 0 means no limit.
-func (s *Store) Search(queryStr string, limit int) ([]Message, error) {
-	compiled, err := s.Compile(queryStr, limit)
+// list fields populated. A limit of 0 means no limit; offset skips that many
+// rows (for paginated loading).
+func (s *Store) Search(queryStr string, limit, offset int) ([]Message, error) {
+	q, err := query.Parse(queryStr)
+	if err != nil {
+		return nil, err
+	}
+	compiled, err := q.Compile(query.Options{Limit: limit, Offset: offset})
 	if err != nil {
 		return nil, err
 	}

@@ -33,8 +33,8 @@ query may be supplied on the command line.`,
 		&cli.IntFlag{
 			Name:    "limit",
 			Aliases: []string{"n"},
-			Value:   200,
-			Usage:   "maximum number of results to load",
+			Value:   100,
+			Usage:   "results loaded per page (more load automatically as you scroll)",
 		},
 		&cli.StringFlag{
 			Name:    "theme",
@@ -78,10 +78,10 @@ const (
 )
 
 type model struct {
-	store  *store.Store
-	limit  int
-	theme  theme
-	reload time.Duration
+	store    *store.Store
+	pageSize int
+	theme    theme
+	reload   time.Duration
 
 	width  int
 	height int
@@ -92,10 +92,12 @@ type model struct {
 	input    textinput.Model
 	viewport viewport.Model
 
-	query   string // the query backing the current results (used by reload)
-	results []store.Message
-	cursor  int // selected index into results
-	top     int // first visible result row (scroll offset)
+	query       string // the query backing the current results (used by reload)
+	results     []store.Message
+	cursor      int  // selected index into results
+	top         int  // first visible result row (scroll offset)
+	loadedAll   bool // the last page was short: nothing more to fetch
+	loadingMore bool // a next-page fetch is in flight
 
 	detail  *store.Message
 	loading bool
@@ -112,7 +114,7 @@ func newModel(st *store.Store, limit int, reload time.Duration, initialQuery str
 
 	return &model{
 		store:    st,
-		limit:    limit,
+		pageSize: max(1, limit),
 		theme:    th,
 		reload:   reload,
 		state:    stateSearch,
@@ -123,16 +125,27 @@ func newModel(st *store.Store, limit int, reload time.Duration, initialQuery str
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.runSearch(m.query, m.query != "", false), m.scheduleReload())
+	return tea.Batch(m.input.Focus(), m.firstPage(m.query != ""), m.scheduleReload())
 }
 
 // --- messages & commands ---------------------------------------------------
 
+// searchMsg carries a fresh (first-page or reload) result set that replaces the
+// current results.
 type searchMsg struct {
 	results []store.Message
+	limit   int // the requested limit, to decide whether more rows remain
 	err     error
 	advance bool // move focus to the list when results arrive
 	keepPos bool // preserve the cursor/scroll position (used by reload)
+}
+
+// pageMsg carries an appended page of results for endless scrolling.
+type pageMsg struct {
+	query   string // the query this page was fetched for (staleness guard)
+	offset  int    // the offset it was fetched at (staleness guard)
+	results []store.Message
+	err     error
 }
 
 type detailMsg struct {
@@ -143,12 +156,38 @@ type detailMsg struct {
 // reloadTickMsg is delivered on the auto-reload timer.
 type reloadTickMsg struct{}
 
-func (m *model) runSearch(q string, advance, keepPos bool) tea.Cmd {
-	st, limit := m.store, m.limit
+// search runs the query and wraps the rows with wrap, off the UI goroutine.
+func (m *model) search(q string, limit, offset int, wrap func([]store.Message, error) tea.Msg) tea.Cmd {
+	st := m.store
 	return func() tea.Msg {
-		res, err := st.Search(q, limit)
-		return searchMsg{results: res, err: err, advance: advance, keepPos: keepPos}
+		res, err := st.Search(q, limit, offset)
+		return wrap(res, err)
 	}
+}
+
+// firstPage fetches page one of the active query, replacing the results.
+func (m *model) firstPage(advance bool) tea.Cmd {
+	limit := m.pageSize
+	return m.search(m.query, limit, 0, func(res []store.Message, err error) tea.Msg {
+		return searchMsg{results: res, limit: limit, err: err, advance: advance}
+	})
+}
+
+// reloadPages re-fetches the span already loaded (offset 0, limit = loaded
+// count), preserving the cursor. Used by manual and auto reload.
+func (m *model) reloadPages() tea.Cmd {
+	limit := max(m.pageSize, len(m.results))
+	return m.search(m.query, limit, 0, func(res []store.Message, err error) tea.Msg {
+		return searchMsg{results: res, limit: limit, err: err, keepPos: true}
+	})
+}
+
+// nextPage fetches the page following what is already loaded and appends it.
+func (m *model) nextPage() tea.Cmd {
+	q, offset := m.query, len(m.results)
+	return m.search(q, m.pageSize, offset, func(res []store.Message, err error) tea.Msg {
+		return pageMsg{query: q, offset: offset, results: res, err: err}
+	})
 }
 
 // scheduleReload arms the periodic auto-reload timer. It returns nil when
@@ -181,11 +220,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case searchMsg:
 		return m.onSearch(msg)
+	case pageMsg:
+		return m.onPage(msg)
 	case detailMsg:
 		return m.onDetail(msg)
 	case reloadTickMsg:
-		// Silently refresh the current results and re-arm the timer.
-		return m, tea.Batch(m.runSearch(m.query, false, true), m.scheduleReload())
+		// Silently refresh the loaded span and re-arm the timer.
+		return m, tea.Batch(m.reloadPages(), m.scheduleReload())
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 	}
@@ -203,12 +244,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) onSearch(msg searchMsg) (tea.Model, tea.Cmd) {
 	m.loading = false
+	m.loadingMore = false
 	m.err = msg.err
 	if msg.err != nil {
 		m.results = nil
+		m.loadedAll = true
 		return m, nil
 	}
 	m.results = msg.results
+	m.loadedAll = len(msg.results) < msg.limit
 	if msg.keepPos {
 		m.cursor = clamp(m.cursor, 0, max(0, len(m.results)-1))
 		m.syncScroll()
@@ -219,7 +263,38 @@ func (m *model) onSearch(msg searchMsg) (tea.Model, tea.Cmd) {
 		m.state = stateList
 		m.input.Blur()
 	}
-	return m, nil
+	return m, m.maybeFetchMore()
+}
+
+// onPage appends a fetched page, guarding against stale results from a query
+// that has since changed.
+func (m *model) onPage(msg pageMsg) (tea.Model, tea.Cmd) {
+	m.loadingMore = false
+	if msg.err != nil {
+		m.err = msg.err
+		m.loadedAll = true
+		return m, nil
+	}
+	if msg.query != m.query || msg.offset != len(m.results) {
+		return m, nil // stale page; ignore
+	}
+	m.results = append(m.results, msg.results...)
+	m.loadedAll = len(msg.results) < m.pageSize
+	return m, m.maybeFetchMore()
+}
+
+// maybeFetchMore loads the next page when the visible window comes within a
+// screen of the end of what is loaded. It is a no-op when everything is loaded,
+// a fetch is already in flight, or there is no store (tests).
+func (m *model) maybeFetchMore() tea.Cmd {
+	if m.loadedAll || m.loadingMore || m.store == nil {
+		return nil
+	}
+	if m.top+2*m.listHeight() >= len(m.results) {
+		m.loadingMore = true
+		return m.nextPage()
+	}
+	return nil
 }
 
 func (m *model) onDetail(msg detailMsg) (tea.Model, tea.Cmd) {
@@ -241,9 +316,9 @@ func (m *model) onKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "ctrl+r":
-		// Reload the active query, keeping the cursor where it is.
+		// Reload the loaded span, keeping the cursor where it is.
 		m.loading = true
-		return m, m.runSearch(m.query, false, true)
+		return m, m.reloadPages()
 	}
 	switch m.state {
 	case stateSearch:
@@ -261,7 +336,7 @@ func (m *model) keySearch(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.loading = true
 		m.query = m.input.Value()
-		return m, m.runSearch(m.query, true, false)
+		return m, m.firstPage(true)
 	case "down", "tab":
 		if len(m.results) > 0 {
 			m.state = stateList
@@ -291,7 +366,7 @@ func (m *model) keyList(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		m.navigateList(k.String())
-		return m, nil
+		return m, m.maybeFetchMore()
 	}
 }
 
