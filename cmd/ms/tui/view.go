@@ -1,0 +1,355 @@
+package tui
+
+import (
+	"fmt"
+	"html"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/rubiojr/meliafts/internal/store"
+)
+
+func (m *model) View() tea.View {
+	var content string
+	switch {
+	case !m.ready:
+		content = "loading…"
+	case m.width < 50 || m.height < 8:
+		content = "terminal too small"
+	case m.state == stateDetail:
+		content = m.viewDetail()
+	default:
+		content = m.viewBrowse()
+	}
+
+	v := tea.NewView(content)
+	v.BackgroundColor = colBg
+	v.AltScreen = true
+	return v
+}
+
+// --- browse screen ---------------------------------------------------------
+
+func (m *model) viewBrowse() string {
+	lines := make([]string, 0, m.height)
+	lines = append(lines, m.titleBar("mail search"))
+	lines = append(lines, m.inputLine())
+	lines = append(lines, m.rule())
+	lines = append(lines, m.listLines(m.listHeight())...)
+	lines = append(lines, m.statusBar(m.browseStatus()))
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) listLines(h int) []string {
+	out := make([]string, 0, h)
+
+	switch {
+	case m.err != nil:
+		out = append(out, " "+errStyle.Render("error: "+m.err.Error()))
+	case m.loading && len(m.results) == 0:
+		out = append(out, " "+emptyStyle.Render("searching…"))
+	case len(m.results) == 0:
+		out = append(out, " "+emptyStyle.Render("no messages match this query"))
+	default:
+		end := min(m.top+h, len(m.results))
+		for i := m.top; i < end; i++ {
+			out = append(out, m.listRow(i))
+		}
+	}
+
+	for len(out) < h {
+		out = append(out, "")
+	}
+	return out[:h]
+}
+
+func (m *model) listRow(i int) string {
+	r := m.results[i]
+	selected := i == m.cursor && m.state == stateList
+
+	mark := "  "
+	if selected {
+		mark = cursorMark.Render("▸ ")
+	}
+
+	flags := m.flagBadge(r)
+	date := itemDim.Render(fmt.Sprintf("%-16s", formatDate(r.Date)))
+	from := fmt.Sprintf("%-18s", truncate(senderShort(r), 18))
+
+	subjectW := max(4, m.width-46)
+	subject := truncate(firstNonEmpty(r.Subject, "(no subject)"), subjectW)
+
+	body := from + "  " + subject
+	if selected {
+		body = itemSel.Render(body)
+	} else if r.IsRead {
+		body = itemDim.Render(body)
+	} else {
+		body = itemStyle.Render(body)
+	}
+
+	return mark + flags + " " + date + "  " + body
+}
+
+func (m *model) flagBadge(r store.Message) string {
+	u, f, a := " ", " ", " "
+	if !r.IsRead {
+		u = flagUnread.Render("U")
+	}
+	if r.IsFlagged {
+		f = flagFlagged.Render("*")
+	}
+	if r.HasAttachments {
+		a = flagAttach.Render("@")
+	}
+	return bracketDim.Render("[") + u + f + a + bracketDim.Render("]")
+}
+
+func (m *model) browseStatus() string {
+	if m.state == stateSearch {
+		return "ENTER run · ↓/TAB browse · ESC quit"
+	}
+	pos := 0
+	if len(m.results) > 0 {
+		pos = m.cursor + 1
+	}
+	return fmt.Sprintf("%d/%d · ↑↓ move · ENTER open · / edit query · q quit", pos, len(m.results))
+}
+
+// --- detail screen ---------------------------------------------------------
+
+func (m *model) viewDetail() string {
+	lines := make([]string, 0, m.height)
+	lines = append(lines, m.titleBar("message"))
+	lines = append(lines, m.detailMeta()...)
+	lines = append(lines, m.rule())
+	lines = append(lines, strings.Split(m.viewport.View(), "\n")...)
+	lines = append(lines, m.statusBar(m.detailStatus()))
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) detailMeta() []string {
+	d := m.detail
+	valueW := max(1, m.width-8)
+
+	subject := subjectBig.Render(truncate(firstNonEmpty(d.Subject, "(no subject)"), max(1, m.width-1)))
+	from := metaLabel.Render("From  ") + metaValue.Render(truncate(senderFull(d), valueW))
+	date := metaLabel.Render("Date  ") + metaValue.Render(truncate(formatDate(d.Date), valueW))
+
+	return []string{" " + subject, " " + from, " " + date}
+}
+
+func (m *model) detailStatus() string {
+	pct := "top"
+	switch {
+	case m.viewport.AtBottom():
+		pct = "end"
+	case m.viewport.AtTop():
+		pct = "top"
+	default:
+		pct = fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))
+	}
+	return fmt.Sprintf("%s · ↑/↓ scroll · ESC back · q quit", pct)
+}
+
+// renderBody builds the scrollable message body, preferring plain text and
+// falling back to a stripped HTML body or the snippet.
+func (m *model) renderBody(d *store.Message) string {
+	text := strings.TrimSpace(d.BodyText)
+	if text == "" {
+		text = strings.TrimSpace(htmlToText(d.BodyHTML))
+	}
+	if text == "" {
+		text = strings.TrimSpace(d.Snippet)
+	}
+	if text == "" {
+		return emptyStyle.Render("(this message has no readable body)")
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return bodyStyle.Width(max(10, m.width-1)).Render(text)
+}
+
+// --- chrome ----------------------------------------------------------------
+
+func (m *model) titleBar(sub string) string {
+	left := titleStyle.Render(" MELIA ")
+	avail := max(0, m.width-lipgloss.Width(left))
+	subtitle := truncate(" · "+sub, avail)
+	pad := avail - len([]rune(subtitle))
+	if pad > 0 {
+		subtitle += strings.Repeat(" ", pad)
+	}
+	return left + titleSubStyle.Render(subtitle)
+}
+
+func (m *model) inputLine() string {
+	return " " + m.input.View()
+}
+
+func (m *model) rule() string {
+	return ruleStyle.Render(strings.Repeat("─", max(0, m.width)))
+}
+
+func (m *model) statusBar(s string) string {
+	line := truncate(" "+s, m.width)
+	if pad := m.width - len([]rune(line)); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return statusStyle.Render(line)
+}
+
+// --- helpers ---------------------------------------------------------------
+
+func lipglossWidth(s string) int { return lipgloss.Width(s) }
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+func senderShort(m store.Message) string {
+	if m.FromName != "" {
+		return m.FromName
+	}
+	return m.FromAddress
+}
+
+func senderFull(m *store.Message) string {
+	switch {
+	case m.FromName != "" && m.FromAddress != "":
+		return fmt.Sprintf("%s <%s>", m.FromName, m.FromAddress)
+	case m.FromName != "":
+		return m.FromName
+	default:
+		return m.FromAddress
+	}
+}
+
+func formatDate(s string) string {
+	if s == "" {
+		return ""
+	}
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	}
+	for _, l := range layouts {
+		if t, err := time.Parse(l, s); err == nil {
+			return t.Format("2006-01-02 15:04")
+		}
+	}
+	return truncate(s, 16)
+}
+
+func truncate(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// htmlToText is a small best-effort HTML-to-text converter for rendering
+// HTML-only message bodies. It drops script/style blocks, turns block-level
+// tags into line breaks, strips remaining tags and unescapes entities.
+func htmlToText(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = stripBlock(s, "script")
+	s = stripBlock(s, "style")
+
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '<' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(s[i:], '>')
+		if end < 0 {
+			break
+		}
+		name, closing := tagName(s[i+1 : i+end])
+		if name == "br" || name == "hr" || (closing && isBlockTag(name)) {
+			b.WriteByte('\n')
+		}
+		i += end + 1
+	}
+	return tidyText(html.UnescapeString(b.String()))
+}
+
+func isBlockTag(name string) bool {
+	switch name {
+	case "p", "div", "tr", "li", "ul", "ol", "table",
+		"h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre":
+		return true
+	}
+	return false
+}
+
+func tagName(raw string) (name string, closing bool) {
+	raw = strings.TrimSpace(raw)
+	closing = strings.HasPrefix(raw, "/")
+	raw = strings.TrimPrefix(raw, "/")
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case ' ', '\t', '\n', '/', '>':
+			return strings.ToLower(raw[:i]), closing
+		}
+	}
+	return strings.ToLower(raw), closing
+}
+
+func stripBlock(s, tag string) string {
+	for {
+		lower := strings.ToLower(s)
+		start := strings.Index(lower, "<"+tag)
+		if start < 0 {
+			return s
+		}
+		closeTag := "</" + tag + ">"
+		rel := strings.Index(lower[start:], closeTag)
+		if rel < 0 {
+			return s[:start]
+		}
+		s = s[:start] + s[start+rel+len(closeTag):]
+	}
+}
+
+func tidyText(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	s = strings.Join(lines, "\n")
+	for strings.Contains(s, "\n\n\n") {
+		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(s)
+}
