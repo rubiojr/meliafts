@@ -5,7 +5,7 @@ A [Melia](https://melia.buxjr.com) email search CLI (very much a vibecoded WiP).
 ## Install
 
 ```
-go install github.com/rubiojr/meliafts/cmd/ms
+go install github.com/rubiojr/meliafts/cmd/ms@latest
 ```
 
 ## Run

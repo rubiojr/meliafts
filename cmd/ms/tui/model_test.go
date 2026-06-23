@@ -8,13 +8,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rubiojr/meliafts/internal/store"
+	"github.com/rubiojr/meliafts/internal/themes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
 // testTheme is the default theme used across model tests.
-var testTheme = mustTheme(defaultTheme)
+var testTheme = mustTheme(themes.Default)
 
 func mustTheme(name string) theme {
 	th, err := newTheme(name)
@@ -25,7 +26,7 @@ func mustTheme(name string) theme {
 }
 
 func TestThemes(t *testing.T) {
-	names := themeNames()
+	names := themes.Names()
 	assert.Subset(t, names, []string{"amber", "green", "synthwave", "ice", "paper"})
 
 	for _, name := range names {
@@ -115,7 +116,7 @@ func TestKeyStringMapping(t *testing.T) {
 
 func TestReloadKeepsPosition(t *testing.T) {
 	st := newTestStore(t)
-	m := newModel(st, 50, "", testTheme)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
 	runCmd(t, m, m.runSearch("", false, false))
 	require.Len(t, m.results, 2)
@@ -134,9 +135,53 @@ func TestReloadKeepsPosition(t *testing.T) {
 	assert.Len(t, m.results, 2)
 }
 
+func TestReloadUsesActiveQuery(t *testing.T) {
+	st := newTestStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	runCmd(t, m, m.runSearch("", false, false)) // active query is ""
+	require.Len(t, m.results, 2)
+
+	m.state = stateList
+	// Edit the input without pressing Enter: the active query must not change.
+	m.input.SetValue("subject:invoice")
+
+	_, cmd := m.Update(key("ctrl+r"))
+	runCmd(t, m, cmd)
+	// Reload re-ran the active query (""), not the half-typed input.
+	assert.Len(t, m.results, 2)
+}
+
+func TestScheduleReloadToggle(t *testing.T) {
+	st := newTestStore(t)
+
+	on := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	assert.NotNil(t, on.scheduleReload())
+
+	off := newModel(st, 50, 0, "", testTheme)
+	assert.Nil(t, off.scheduleReload(), "a reload interval of 0 disables the timer")
+}
+
+func TestAutoReloadTickReArms(t *testing.T) {
+	st := newTestStore(t)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
+	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	runCmd(t, m, m.runSearch("", false, false))
+	m.state = stateList
+	m.moveTo(1)
+
+	// A tick returns a command (reload + re-armed timer) and leaves the view as
+	// it was. The returned cmd is not executed here to avoid blocking on the
+	// 30s timer.
+	_, cmd := m.Update(reloadTickMsg{})
+	require.NotNil(t, cmd)
+	assert.Equal(t, stateList, m.state)
+	assert.Equal(t, 1, m.cursor)
+}
+
 func TestModelSearchFlow(t *testing.T) {
 	st := newTestStore(t)
-	m := newModel(st, 50, "", testTheme)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 
 	// Window size and initial (empty) search loading all messages.
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
@@ -176,7 +221,7 @@ func TestModelSearchFlow(t *testing.T) {
 
 func TestModelInvalidQuery(t *testing.T) {
 	st := newTestStore(t)
-	m := newModel(st, 50, "", testTheme)
+	m := newModel(st, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
 
 	m.input.SetValue("bogus:field")
@@ -190,7 +235,7 @@ func TestModelInvalidQuery(t *testing.T) {
 }
 
 func TestModelScrolling(t *testing.T) {
-	m := newModel(nil, 50, "", testTheme)
+	m := newModel(nil, 50, defaultReloadInterval, "", testTheme)
 	m.Update(tea.WindowSizeMsg{Width: 90, Height: 24}) // listHeight = 24-4 = 20
 	m.results = make([]store.Message, 100)
 	for i := range m.results {

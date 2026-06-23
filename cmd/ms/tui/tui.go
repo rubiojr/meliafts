@@ -5,13 +5,18 @@ package tui
 import (
 	"context"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/rubiojr/meliafts/internal/store"
+	"github.com/rubiojr/meliafts/internal/themes"
 	"github.com/urfave/cli/v3"
 )
+
+// defaultReloadInterval is the default auto-reload period.
+const defaultReloadInterval = 30 * time.Second
 
 // Command is the `ms tui` subcommand.
 var Command = &cli.Command{
@@ -34,8 +39,13 @@ query may be supplied on the command line.`,
 		&cli.StringFlag{
 			Name:    "theme",
 			Aliases: []string{"t"},
-			Value:   defaultTheme,
-			Usage:   "color theme (" + strings.Join(themeNames(), ", ") + ")",
+			Value:   themes.Default,
+			Usage:   "color theme (" + strings.Join(themes.Names(), ", ") + ")",
+		},
+		&cli.DurationFlag{
+			Name:  "reload",
+			Value: defaultReloadInterval,
+			Usage: "auto-reload interval (e.g. 30s, 2m; 0 to disable)",
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -51,7 +61,8 @@ query may be supplied on the command line.`,
 		defer st.Close()
 
 		initial := strings.Join(cmd.Args().Slice(), " ")
-		p := tea.NewProgram(newModel(st, cmd.Int("limit"), initial, th), tea.WithContext(ctx))
+		m := newModel(st, cmd.Int("limit"), cmd.Duration("reload"), initial, th)
+		p := tea.NewProgram(m, tea.WithContext(ctx))
 		_, err = p.Run()
 		return err
 	},
@@ -67,9 +78,10 @@ const (
 )
 
 type model struct {
-	store *store.Store
-	limit int
-	theme theme
+	store  *store.Store
+	limit  int
+	theme  theme
+	reload time.Duration
 
 	width  int
 	height int
@@ -80,6 +92,7 @@ type model struct {
 	input    textinput.Model
 	viewport viewport.Model
 
+	query   string // the query backing the current results (used by reload)
 	results []store.Message
 	cursor  int // selected index into results
 	top     int // first visible result row (scroll offset)
@@ -89,7 +102,7 @@ type model struct {
 	err     error
 }
 
-func newModel(st *store.Store, limit int, initialQuery string, th theme) *model {
+func newModel(st *store.Store, limit int, reload time.Duration, initialQuery string, th theme) *model {
 	ti := textinput.New()
 	ti.Prompt = "search › "
 	ti.Placeholder = "subject:invoice unread: newer:7d"
@@ -101,14 +114,16 @@ func newModel(st *store.Store, limit int, initialQuery string, th theme) *model 
 		store:    st,
 		limit:    limit,
 		theme:    th,
+		reload:   reload,
 		state:    stateSearch,
+		query:    initialQuery,
 		input:    ti,
 		viewport: viewport.New(),
 	}
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.runSearch(m.input.Value(), m.input.Value() != "", false))
+	return tea.Batch(m.input.Focus(), m.runSearch(m.query, m.query != "", false), m.scheduleReload())
 }
 
 // --- messages & commands ---------------------------------------------------
@@ -125,12 +140,26 @@ type detailMsg struct {
 	err error
 }
 
+// reloadTickMsg is delivered on the auto-reload timer.
+type reloadTickMsg struct{}
+
 func (m *model) runSearch(q string, advance, keepPos bool) tea.Cmd {
 	st, limit := m.store, m.limit
 	return func() tea.Msg {
 		res, err := st.Search(q, limit)
 		return searchMsg{results: res, err: err, advance: advance, keepPos: keepPos}
 	}
+}
+
+// scheduleReload arms the periodic auto-reload timer. It returns nil when
+// auto-reload is disabled (interval <= 0), which stops the timer chain.
+func (m *model) scheduleReload() tea.Cmd {
+	if m.reload <= 0 {
+		return nil
+	}
+	return tea.Tick(m.reload, func(time.Time) tea.Msg {
+		return reloadTickMsg{}
+	})
 }
 
 func (m *model) loadDetail(id string) tea.Cmd {
@@ -154,6 +183,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onSearch(msg)
 	case detailMsg:
 		return m.onDetail(msg)
+	case reloadTickMsg:
+		// Silently refresh the current results and re-arm the timer.
+		return m, tea.Batch(m.runSearch(m.query, false, true), m.scheduleReload())
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 	}
@@ -209,9 +241,9 @@ func (m *model) onKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "ctrl+r":
-		// Reload the current query, keeping the cursor where it is.
+		// Reload the active query, keeping the cursor where it is.
 		m.loading = true
-		return m, m.runSearch(m.input.Value(), false, true)
+		return m, m.runSearch(m.query, false, true)
 	}
 	switch m.state {
 	case stateSearch:
@@ -228,7 +260,8 @@ func (m *model) keySearch(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "enter":
 		m.loading = true
-		return m, m.runSearch(m.input.Value(), true, false)
+		m.query = m.input.Value()
+		return m, m.runSearch(m.query, true, false)
 	case "down", "tab":
 		if len(m.results) > 0 {
 			m.state = stateList
