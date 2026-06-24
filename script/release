@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# release: bump cmd/ms/util/version.go by patch, minor or major and commit the
+# bump, so a matching vX.Y.Z tag can be created afterwards. It does NOT create
+# or push the tag — the reference-transaction hook checks that the tag you make
+# matches the bumped version.
+#
+#   script/release patch   # 0.7.2 -> 0.7.3
+#   script/release minor   # 0.7.2 -> 0.8.0
+#   script/release major   # 0.7.2 -> 1.0.0
+#   git tag v0.7.3         # then tag (and push) yourself
+set -euo pipefail
+
+usage() { echo "usage: script/release <patch|minor|major>" >&2; exit 2; }
+
+[ $# -eq 1 ] || usage
+part="$1"
+case "$part" in
+patch | minor | major) ;;
+*) usage ;;
+esac
+
+cd "$(git rev-parse --show-toplevel)"
+version_file="cmd/ms/util/version.go"
+
+current="$(sed -n 's/^var Version = "\([^"]*\)".*/\1/p' "$version_file")"
+[ -n "$current" ] || { echo "cannot read version from $version_file" >&2; exit 1; }
+
+IFS=. read -r major minor patch <<<"$current"
+case "$part" in
+major) major=$((major + 1)); minor=0; patch=0 ;;
+minor) minor=$((minor + 1)); patch=0 ;;
+patch) patch=$((patch + 1)) ;;
+esac
+next="${major}.${minor}.${patch}"
+
+# Keep the release commit limited to the version bump.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+	echo "working tree is dirty; commit or stash changes first" >&2
+	exit 1
+fi
+
+# Rewrite the version line. We overwrite the existing file (rather than sed -i,
+# which creates a new temp file) so the file keeps its place and we avoid a
+# spurious SELinux "failed to set default file creation context" warning.
+updated="$(sed "s/^var Version = \"${current}\"\$/var Version = \"${next}\"/" "$version_file")"
+printf '%s\n' "$updated" >"$version_file"
+gofmt -w "$version_file"
+
+git add "$version_file"
+git commit --quiet -m "Release v${next}"
+
+echo "bumped ${current} -> ${next} and committed"
+echo "tag it with:  git tag v${next}"

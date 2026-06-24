@@ -11,6 +11,7 @@ import (
 	"github.com/rubiojr/meliafts/cmd/ms/search"
 	"github.com/rubiojr/meliafts/cmd/ms/tui"
 	"github.com/rubiojr/meliafts/cmd/ms/util"
+	"github.com/rubiojr/meliafts/cmd/ms/version"
 	"github.com/rubiojr/meliafts/cmd/ms/watch"
 	"github.com/urfave/cli/v3"
 )
@@ -19,13 +20,14 @@ func main() {
 	cmd := &cli.Command{
 		Name:    util.AppName,
 		Usage:   "Search the melia mail database",
-		Version: util.Version,
+		Version: version.String(),
 		Flags:   util.GlobalFlags(),
 		Commands: []*cli.Command{
 			search.Command,
 			tui.Command,
 			watch.Command,
 			dev.Command,
+			version.Command,
 		},
 	}
 

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# reference-transaction: refuse to create a vX.Y.Z tag whose version does not
+# match cmd/ms/util/version.go. Bump the file with script/release first.
+#
+# Git runs this hook with the working directory at the repository root and feeds
+# "<old> <new> <ref>" lines on stdin. It runs for every ref update, so we only
+# act on tag *creation* (a fresh tag has an all-zero old object id) during the
+# "prepared" phase and ignore everything else. The check compares against the
+# version.go in the working tree, which is the commit you are tagging when you
+# tag HEAD right after a release bump.
+set -eu
+
+[ "${1:-}" = prepared ] || exit 0
+
+version_file="cmd/ms/util/version.go"
+
+while read -r old _ ref; do
+	case "$ref" in
+	refs/tags/v[0-9]*) ;;
+	*) continue ;;
+	esac
+	# Only enforce on creation: an existing tag/update has a non-zero old id.
+	case "$old" in
+	*[!0]*) continue ;;
+	esac
+
+	[ -f "$version_file" ] || continue
+
+	tag=${ref#refs/tags/}
+	want=${tag#v}
+	have=$(sed -n 's/^var Version = "\([^"]*\)".*/\1/p' "$version_file")
+
+	if [ "$want" != "$have" ]; then
+		echo "tag $tag rejected: $version_file declares version $have, not $want" >&2
+		echo "  bump it with 'script/release <patch|minor|major>', or tag v$have" >&2
+		exit 1
+	fi
+done
+
+exit 0

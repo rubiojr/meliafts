@@ -14,10 +14,6 @@ import (
 // AppName is the binary name.
 const AppName = "ms"
 
-// Version is the build version, overridable at link time with
-// -ldflags "-X github.com/rubiojr/meliafts/cmd/ms/util.Version=...".
-var Version = "dev"
-
 // GlobalFlags returns the flags shared by every subcommand. They are persistent
 // (the cli v3 default), so subcommands can read them with cmd.String etc.
 func GlobalFlags() []cli.Flag {
