@@ -14,9 +14,14 @@ go build -o /tmp/ms ./cmd/ms   # build the ms binary
 go run ./cmd/ms search subject:invoice unread:
 ```
 
-The database is always opened **read-only**. Default path:
-`~/.var/app/com.buxjr.melia/config/melia/melia.db` (override with `--db` or
-`$MELIA_DB`). You don't need a real melia database to work on meliafts — generate
+The database is always opened **read-only**. When no path is given it is looked
+up in order — the Flatpak install
+`~/.var/app/com.buxjr.melia/config/melia/melia.db` first, then the Snap install
+(`~/snap/melia/current/.config/melia/melia.db`, then
+`~/snap/melia/common/.config/melia/melia.db`), then a regular install at
+`$XDG_CONFIG_HOME/melia/melia.db` (i.e. `~/.config/melia/melia.db`) — using the
+first that exists and falling back to the Flatpak path. Override with `--db` or
+`$MELIA_DB`. You don't need a real melia database to work on meliafts — generate
 one (see below).
 
 ## Quality gates

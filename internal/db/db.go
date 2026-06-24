@@ -12,19 +12,53 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// defaultRelPath is the melia database location relative to the user's home
-// directory.
-const defaultRelPath = ".var/app/com.buxjr.melia/config/melia/melia.db"
-
-// DefaultPath returns the default melia database path,
-// ~/.var/app/com.buxjr.melia/config/melia/melia.db. It returns an empty string
-// if the user's home directory cannot be determined.
-func DefaultPath() string {
+// candidatePaths returns the known melia database locations, in lookup priority
+// order: the Flatpak install, then the Snap install (its per-revision and common
+// data dirs), then a regular (non-Flatpak) install under the XDG config
+// directory. It returns nil if the user's home directory cannot be determined.
+//
+// melia stores its database at $XDG_CONFIG_HOME/melia/melia.db. Inside the
+// Flatpak and Snap sandboxes $HOME (and therefore the config dir) is remapped,
+// so those locations are matched explicitly; the plain install follows the
+// host's XDG_CONFIG_HOME (default ~/.config).
+func candidatePaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
+		return nil
+	}
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	}
+	return []string{
+		filepath.Join(home, ".var/app/com.buxjr.melia/config/melia/melia.db"), // Flatpak
+		filepath.Join(home, "snap/melia/current/.config/melia/melia.db"),      // Snap (per-revision)
+		filepath.Join(home, "snap/melia/common/.config/melia/melia.db"),       // Snap (cross-revision)
+		filepath.Join(configHome, "melia", "melia.db"),                        // non-Flatpak (XDG)
+	}
+}
+
+// DefaultPath returns the melia database path to use when none is supplied: the
+// first known location that exists on disk, or the primary (Flatpak) location
+// when none of them do. It returns an empty string if the user's home directory
+// cannot be determined.
+func DefaultPath() string {
+	return firstExistingOrPrimary(candidatePaths())
+}
+
+// firstExistingOrPrimary returns the first candidate that exists as a regular
+// file, falling back to the first candidate when none do. It returns "" for an
+// empty list.
+func firstExistingOrPrimary(candidates []string) string {
+	if len(candidates) == 0 {
 		return ""
 	}
-	return filepath.Join(home, defaultRelPath)
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return candidates[0]
 }
 
 // OpenReadOnly opens the SQLite database at path in read-only mode.
