@@ -169,6 +169,8 @@ const insertSQL = `INSERT INTO messages
 // message is one row to insert.
 type message struct {
 	id                           string
+	messageID                    string // explicit Message-ID; derived from id when empty
+	threadID                     string // explicit thread id; defaults to id when empty
 	folderID                     string
 	from                         addr
 	to                           []addr
@@ -179,9 +181,17 @@ type message struct {
 }
 
 func (m message) insert(ctx context.Context, stmt *sql.Stmt) error {
+	msgID := m.messageID
+	if msgID == "" {
+		msgID = fmt.Sprintf("<%s@example.com>", m.id)
+	}
+	threadID := m.threadID
+	if threadID == "" {
+		threadID = m.id
+	}
 	_, err := stmt.ExecContext(ctx,
 		m.id, accountID, m.folderID,
-		fmt.Sprintf("<%s@example.com>", m.id), m.id,
+		msgID, threadID,
 		m.from.Email, nullable(m.from.Name), addrsJSON(m.to), nullableJSON(m.cc),
 		nullable(m.subject), snippet(m.body), nullable(m.body), nullable(m.bodyHTML),
 		m.date.UTC().Format("2006-01-02 15:04:05"),

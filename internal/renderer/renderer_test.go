@@ -133,23 +133,25 @@ func decodeEML(t *testing.T, path string) string {
 	return string(b)
 }
 
-// TestHTMLToTextSampleEML renders a real Amazon "package ready for pickup"
-// email — a quoted-printable MJML template stuffed with conditional comments,
-// inline CSS, nested layout tables and invisible preheader padding — and checks
-// that the readable content survives while the noise is gone.
+// TestHTMLToTextSampleEML renders a synthetic marketing email — a
+// quoted-printable template stuffed with an Outlook conditional comment, a large
+// inline stylesheet, nested layout tables and invisible preheader padding (the
+// same shape as the real-world mail that motivated the renderer, but with no
+// private data) — and checks that the readable content survives while the noise
+// is gone.
 func TestHTMLToTextSampleEML(t *testing.T) {
 	htmlBody := decodeEML(t, "testdata/sample.eml")
 	out := HTMLToText(htmlBody)
 
 	// The meaningful content is present.
 	for _, want := range []string{
-		"El paquete está listo para su recogida",
-		"Recoge antes del 23 de junio",
-		"Amazon Locker - ciclismo Eroski Caprabo El Masnou",
-		"Pedido n.º 403-8972895-9086769",
-		"Comenzar la recogida",
-		"Shure PGA58 Dynamic Microphone",
-		"Mis pedidos",
+		"Your order is ready for pickup",
+		"Pick up before Friday",
+		"Pickup Point - Example Store",
+		"Order no. 000-0000000-0000000",
+		"Start pickup",
+		"Acme Wireless Microphone",
+		"My orders",
 	} {
 		assert.Contains(t, out, want)
 	}

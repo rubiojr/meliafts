@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/rubiojr/meliafts/cmd/ms/dev"
 	"github.com/rubiojr/meliafts/cmd/ms/search"
 	"github.com/rubiojr/meliafts/cmd/ms/tui"
 	"github.com/rubiojr/meliafts/cmd/ms/util"
@@ -24,6 +25,7 @@ func main() {
 			search.Command,
 			tui.Command,
 			watch.Command,
+			dev.Command,
 		},
 	}
 

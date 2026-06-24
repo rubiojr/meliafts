@@ -56,3 +56,7 @@ ms tui
 _Note: data in the screenshot was randomly generated_
 
 TUI supports themes (`--theme`), `ms tui --help` to list them.
+
+## Development
+
+Building, testing and generating sample databases. See [docs/development.md](docs/development.md).
