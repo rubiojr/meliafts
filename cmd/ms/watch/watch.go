@@ -14,6 +14,7 @@ import (
 
 	"github.com/rubiojr/meliafts/cmd/ms/util"
 	"github.com/rubiojr/meliafts/internal/actions"
+	"github.com/rubiojr/meliafts/internal/query"
 	"github.com/rubiojr/meliafts/internal/store"
 	"github.com/urfave/cli/v3"
 )
@@ -47,6 +48,13 @@ a template you can edit and chmod +x. See docs/actions.md for the full guide.`,
 }
 
 func run(ctx context.Context, cmd *cli.Command) error {
+	// Validate the query up front so an invalid one is always reported, whether
+	// or not the actions directory currently has runnable scripts.
+	q := strings.Join(cmd.Args().Slice(), " ")
+	if _, err := query.Parse(q); err != nil {
+		return fmt.Errorf("invalid query: %w", err)
+	}
+
 	dir := cmd.String("actions-dir")
 	runner := &actions.Runner{
 		Dir:     dir,
@@ -75,7 +83,7 @@ func run(ctx context.Context, cmd *cli.Command) error {
 	poller := &actions.Poller{
 		Store:        st,
 		Runner:       runner,
-		Query:        strings.Join(cmd.Args().Slice(), " "),
+		Query:        q,
 		Limit:        cmd.Int("limit"),
 		FireExisting: cmd.Bool("fire-existing"),
 	}
