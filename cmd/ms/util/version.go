@@ -5,4 +5,4 @@ package util
 // .githooks/reference-transaction hook refuses any vX.Y.Z tag that does not
 // match it. Overridable at link time with
 // -ldflags "-X github.com/rubiojr/meliafts/cmd/ms/util.Version=...".
-var Version = "0.8.3"
+var Version = "0.8.4"
