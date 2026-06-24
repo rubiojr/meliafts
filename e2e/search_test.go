@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rubiojr/meliafts/internal/profile"
 	"github.com/rubiojr/meliafts/internal/sampledb"
+	"github.com/rubiojr/meliafts/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -48,6 +50,23 @@ func fixtureDB(t *testing.T) string {
 		Seed: 1, Messages: 80, Now: time.Now(),
 	}))
 	return path
+}
+
+// profileFixtureDB builds a database from the committed real-world profile
+// (internal/sampledb/testdata/profile.json: ~10.5k messages across an inbox, an
+// archive/"All Mail", empty and null-type folders, with mostly-empty bodies). It
+// returns the database path and the parsed profile, so tests derive their
+// expectations from the same source they build from.
+func profileFixtureDB(t *testing.T) (string, *profile.Profile) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "internal", "sampledb", "testdata", "profile.json"))
+	require.NoError(t, err)
+	var p profile.Profile
+	require.NoError(t, json.Unmarshal(raw, &p))
+
+	path := filepath.Join(t.TempDir(), "melia.db")
+	require.NoError(t, sampledb.BuildFromProfile(context.Background(), path, &p, sampledb.Options{Seed: 1}))
+	return path, &p
 }
 
 // runMS runs the ms binary and returns combined output and the exit code.
@@ -134,5 +153,69 @@ func TestE2E(t *testing.T) {
 		out, code = runMS(t, "--db", dbp, "--force-schema-unsupported", "search", "hello")
 		assert.Equal(t, 0, code, out)
 		assert.Contains(t, out, "schema version 999", "the warning is still printed under --force")
+	})
+}
+
+// TestE2EProfile runs ms against a database generated from the committed
+// real-world profile, exercising the whole stack (query → store → DB) at a
+// realistic shape and scale that the small curated fixture cannot: ~10.5k
+// messages, an archive/"All Mail" folder duplicating much of the mailbox, empty
+// and null-type folders, and bodies that are mostly unset (snippet only).
+//
+// Expectations are derived from the same profile the database is built from, so
+// they stay correct if the fixture is regenerated, and they avoid any
+// wall-clock/date dependency.
+func TestE2EProfile(t *testing.T) {
+	dbPath, prof := profileFixtureDB(t)
+	ms := func(args ...string) (string, int) {
+		return runMS(t, append([]string{"--db", dbPath}, args...)...)
+	}
+	searchJSON := func(t *testing.T, args ...string) []store.Message {
+		t.Helper()
+		out, code := ms(append([]string{"search", "--json", "--limit", "0"}, args...)...)
+		require.Equal(t, 0, code, out)
+		var msgs []store.Message
+		require.NoError(t, json.Unmarshal([]byte(out), &msgs))
+		return msgs
+	}
+
+	// Per-folder counts are reproduced exactly, so the folder filter must return
+	// precisely that many rows out of the full ~10k-message database.
+	byType := map[string]int{}
+	for _, f := range prof.Folders {
+		byType[f.Type] += f.Messages
+	}
+	for _, ftype := range []string{"inbox", "sent", "trash", "spam", "drafts"} {
+		t.Run("in:"+ftype, func(t *testing.T) {
+			assert.Len(t, searchJSON(t, "in:"+ftype), byType[ftype])
+		})
+	}
+
+	t.Run("whole mailbox is searchable", func(t *testing.T) {
+		// Includes the archive/custom "All Mail" copies, which no in: filter can
+		// reach, so this also proves they are returned by an unfiltered search.
+		msgs := searchJSON(t)
+		assert.Len(t, msgs, prof.Messages.Total)
+		assert.Greater(t, len(msgs), byType["inbox"], "more than just the inbox is returned")
+	})
+
+	t.Run("sent items are from the account", func(t *testing.T) {
+		msgs := searchJSON(t, "in:sent")
+		require.NotEmpty(t, msgs)
+		for _, m := range msgs {
+			assert.Equal(t, "you@example.com", m.FromAddress)
+		}
+	})
+
+	t.Run("results carry a snippet even though bodies are lazy", func(t *testing.T) {
+		out, code := ms("search", "--json", "--limit", "200", "in:inbox")
+		require.Equal(t, 0, code, out)
+		var msgs []store.Message
+		require.NoError(t, json.Unmarshal([]byte(out), &msgs))
+		require.NotEmpty(t, msgs)
+		for _, m := range msgs {
+			assert.NotEmpty(t, m.Snippet, "snippet present for %s", m.ID)
+			assert.Empty(t, m.BodyText, "list rows never carry the body")
+		}
 	})
 }
