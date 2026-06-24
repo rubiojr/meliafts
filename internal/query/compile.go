@@ -113,35 +113,48 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 	hideSpam := opts.HideSpam && !p.spamRequested
 	extra := viewConditions(dedup, hideSpam)
 
-	var b strings.Builder
-	var args []any
-
 	if posExpr != "" {
-		// Full-text search path: join the FTS table to messages.
-		matchExpr := posExpr
-		if negExpr != "" {
-			matchExpr = posExpr + " NOT (" + negExpr + ")"
-		}
-		fmt.Fprintf(&b, "SELECT %s FROM %s JOIN %s m ON m.rowid = %s.rowid WHERE %s MATCH ?",
-			selectList, tableFTS, tableMessages, tableFTS, tableFTS)
-		args = append(args, matchExpr)
-		for i, c := range p.conds {
-			b.WriteString(" AND ")
-			b.WriteString(c)
-			args = append(args, p.condArgs[i])
-		}
-		for _, ec := range extra {
-			b.WriteString(" AND ")
-			b.WriteString(ec)
-		}
-		// m.id is a stable tiebreaker so LIMIT/OFFSET pagination doesn't skip or
-		// duplicate rows when ranks are equal.
-		b.WriteString(" ORDER BY rank, m.id")
-		applyLimit(&b, &args, opts)
-		return &Compiled{SQL: b.String(), Args: args, FTSMatch: matchExpr}, nil
+		return compileFTS(selectList, p, posExpr, negExpr, extra, opts), nil
+	}
+	return compileMessages(selectList, p, negExpr, extra, opts), nil
+}
+
+// compileFTS builds the full-text search shape: join the FTS table to messages
+// and constrain with `messages_fts MATCH ?`, ordered by FTS rank. Any negative
+// terms are folded into the MATCH expression as a trailing NOT (...).
+func compileFTS(selectList string, p *parts, posExpr, negExpr string, extra []string, opts Options) *Compiled {
+	matchExpr := posExpr
+	if negExpr != "" {
+		matchExpr = posExpr + " NOT (" + negExpr + ")"
 	}
 
-	// No positive full-text terms: query the messages table directly.
+	var b strings.Builder
+	var args []any
+	fmt.Fprintf(&b, "SELECT %s FROM %s JOIN %s m ON m.rowid = %s.rowid WHERE %s MATCH ?",
+		selectList, tableFTS, tableMessages, tableFTS, tableFTS)
+	args = append(args, matchExpr)
+	for i, c := range p.conds {
+		b.WriteString(" AND ")
+		b.WriteString(c)
+		args = append(args, p.condArgs[i])
+	}
+	for _, ec := range extra {
+		b.WriteString(" AND ")
+		b.WriteString(ec)
+	}
+	// m.id is a stable tiebreaker so LIMIT/OFFSET pagination doesn't skip or
+	// duplicate rows when ranks are equal.
+	b.WriteString(" ORDER BY rank, m.id")
+	applyLimit(&b, &args, opts)
+	return &Compiled{SQL: b.String(), Args: args, FTSMatch: matchExpr}
+}
+
+// compileMessages builds the no-positive-FTS shape: query the messages table
+// directly. Any negative full-text terms become a `rowid NOT IN (... MATCH ?)`
+// exclusion. It also covers the flag-only and empty-query cases.
+func compileMessages(selectList string, p *parts, negExpr string, extra []string, opts Options) *Compiled {
+	var b strings.Builder
+	var args []any
 	fmt.Fprintf(&b, "SELECT %s FROM %s m", selectList, tableMessages)
 
 	conds := append([]string(nil), p.conds...)
@@ -158,7 +171,7 @@ func (q *Query) Compile(opts Options) (*Compiled, error) {
 	}
 	b.WriteString(" ORDER BY m.date DESC, m.id DESC")
 	applyLimit(&b, &args, opts)
-	return &Compiled{SQL: b.String(), Args: args, FTSMatch: ""}, nil
+	return &Compiled{SQL: b.String(), Args: args, FTSMatch: ""}
 }
 
 // viewConditions returns extra WHERE predicates for the "view" options (spam

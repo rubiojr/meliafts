@@ -309,11 +309,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMsg:
 		return m.onDetail(msg)
 	case actionsRanMsg:
-		m.actionsFired += msg.fired
-		if msg.err != nil {
-			m.actionWarn = true
-		}
-		return m, nil
+		return m.onActionsRan(msg)
 	case reloadTickMsg:
 		// Silently refresh the loaded span and re-arm the timer.
 		return m, tea.Batch(m.reloadPages(), m.scheduleReload())
@@ -322,6 +318,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward other messages (cursor blink, etc.) to the active component.
+	return m.forward(msg)
+}
+
+// onActionsRan records the outcome of an asynchronous action batch in the model
+// so the status bar can show how many scripts fired (and whether any errored).
+func (m *model) onActionsRan(msg actionsRanMsg) (tea.Model, tea.Cmd) {
+	m.actionsFired += msg.fired
+	if msg.err != nil {
+		m.actionWarn = true
+	}
+	return m, nil
+}
+
+// forward passes a message the model doesn't handle itself (cursor blink, etc.)
+// to the component backing the active state.
+func (m *model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.state {
 	case stateSearch:
