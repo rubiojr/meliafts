@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/rubiojr/meliafts/internal/db"
@@ -36,36 +37,82 @@ profile JSON, and --save-profile writes the (content-free) profile it used.`,
 
 func runGendb(ctx context.Context, cmd *cli.Command) error {
 	out := cmd.String("output")
-	if err := os.Remove(out); err != nil && !os.IsNotExist(err) {
-		return err
-	}
 
+	// Read and validate the inputs (--from-db / --profile) before touching the
+	// destination, so an invalid source can never delete an existing output file.
 	prof, err := loadProfile(cmd)
 	if err != nil {
 		return err
 	}
-	if prof != nil && cmd.String("save-profile") != "" {
-		if err := writeProfile(prof, cmd.String("save-profile")); err != nil {
-			return err
-		}
-	}
 
-	seed := cmd.Int64("seed")
-	if prof != nil {
-		if err := sampledb.BuildFromProfile(ctx, out, prof, sampledb.Options{Seed: seed}); err != nil {
-			return err
-		}
-		fmt.Printf("wrote %s reproducing %d messages across %d folders (seed %d)\n",
-			out, prof.Messages.Total, len(prof.Folders), seed)
-		return nil
-	}
-
-	count := cmd.Int("count")
-	if err := sampledb.Build(ctx, out, sampledb.Options{Seed: seed, Messages: count, Now: time.Now()}); err != nil {
+	// Generate into a fresh temporary file next to the destination and only move
+	// it into place once everything succeeds. A failed run therefore leaves any
+	// existing output file untouched instead of destroying it. The temp file
+	// lives in the destination directory so the final rename is atomic.
+	tmp, err := buildToTemp(ctx, filepath.Dir(out), prof, cmd.Int64("seed"), cmd.Int("count"))
+	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote %s (%d random + curated messages, seed %d)\n", out, count, seed)
+
+	if prof != nil && cmd.String("save-profile") != "" {
+		if err := writeProfile(prof, cmd.String("save-profile")); err != nil {
+			removeTemp(tmp)
+			return err
+		}
+	}
+
+	if err := os.Rename(tmp, out); err != nil {
+		removeTemp(tmp)
+		return fmt.Errorf("write %s: %w", out, err)
+	}
+
+	reportWritten(cmd, out, prof)
 	return nil
+}
+
+// buildToTemp generates the database into a fresh temporary file inside dir and
+// returns its path for the caller to rename into place. dir should normally be
+// the destination's directory so the rename is atomic; tests can pass their own
+// (e.g. t.TempDir()) to stay self-contained. On any error it cleans up the
+// temporary file and returns the error.
+func buildToTemp(ctx context.Context, dir string, prof *profile.Profile, seed int64, count int) (string, error) {
+	f, err := os.CreateTemp(dir, ".ms-gendb-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmp := f.Name()
+	f.Close()
+	_ = os.Chmod(tmp, 0o644)
+
+	if prof != nil {
+		err = sampledb.BuildFromProfile(ctx, tmp, prof, sampledb.Options{Seed: seed})
+	} else {
+		err = sampledb.Build(ctx, tmp, sampledb.Options{Seed: seed, Messages: count, Now: time.Now()})
+	}
+	if err != nil {
+		removeTemp(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// removeTemp deletes a partially written database and any SQLite sidecar files.
+func removeTemp(path string) {
+	for _, p := range []string{path, path + "-journal", path + "-wal", path + "-shm"} {
+		_ = os.Remove(p)
+	}
+}
+
+// reportWritten prints the success line, which differs for profile reproduction
+// versus random generation.
+func reportWritten(cmd *cli.Command, out string, prof *profile.Profile) {
+	seed := cmd.Int64("seed")
+	if prof != nil {
+		fmt.Printf("wrote %s reproducing %d messages across %d folders (seed %d)\n",
+			out, prof.Messages.Total, len(prof.Folders), seed)
+		return
+	}
+	fmt.Printf("wrote %s (%d random + curated messages, seed %d)\n", out, cmd.Int("count"), seed)
 }
 
 // loadProfile returns the profile to reproduce, or nil for the random generator.
