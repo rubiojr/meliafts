@@ -16,7 +16,7 @@ import (
 // structure described by p — folder layout, message counts, date range, flag
 // ratios and cross-folder ("All Mail") duplication — with synthetic content.
 func BuildFromProfile(ctx context.Context, path string, p *profile.Profile, opts Options) error {
-	db, err := sql.Open("sqlite", path)
+	db, err := openForWrite(path)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func insertFolderPlans(ctx context.Context, db *sql.DB, plans []folderPlan) erro
 func insertProfileMessages(ctx context.Context, db *sql.DB, plans []folderPlan, p *profile.Profile, opts Options) error {
 	rng := rand.New(rand.NewSource(opts.Seed))
 	first, last := dateRange(p.Messages)
-	r := ratios(p.Messages)
+	r := ratios(p.Messages, archiveCount(plans))
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -170,15 +170,16 @@ func ordered(plans []folderPlan) []folderPlan {
 
 func buildProfileMessage(rng *rand.Rand, f folderPlan, pool *[]message, first, last time.Time, r msgRatios, idx int) message {
 	id := fmt.Sprintf("msg-%06d", idx)
-	// All Mail mostly mirrors an existing message (same Message-ID) → dedup.
-	if f.archive && len(*pool) > 0 && rng.Intn(100) < 90 {
+	// All Mail mirrors an existing message (same Message-ID) → dedup. The rate is
+	// derived from the profile so the reproduced distinct_message_id matches.
+	if f.archive && len(*pool) > 0 && rng.Float64() < r.dup {
 		m := (*pool)[rng.Intn(len(*pool))]
 		m.id = id
 		m.folderID = f.id
 		return m
 	}
 
-	m := freshContent(rng, f)
+	m := freshContent(rng, f, r)
 	m.id = id
 	m.messageID = fmt.Sprintf("<gen-%06d@example.com>", idx)
 	m.threadID = m.messageID
@@ -187,7 +188,7 @@ func buildProfileMessage(rng *rand.Rand, f folderPlan, pool *[]message, first, l
 	m.flagged = rng.Float64() < r.flagged
 	m.attach = rng.Float64() < r.attach
 	if rng.Float64() < r.html {
-		m.bodyHTML = htmlWrap(m.subject, m.body)
+		m.bodyHTML = htmlWrap(m.subject, m.snippet)
 	}
 	if !f.archive {
 		*pool = append(*pool, m)
@@ -195,7 +196,7 @@ func buildProfileMessage(rng *rand.Rand, f folderPlan, pool *[]message, first, l
 	return m
 }
 
-func freshContent(rng *rand.Rand, f folderPlan) message {
+func freshContent(rng *rand.Rand, f folderPlan, r msgRatios) message {
 	var m message
 	if f.ptype == "sent" || f.ptype == "drafts" {
 		m.from, m.to = me, []addr{pick(rng, people)}
@@ -208,14 +209,20 @@ func freshContent(rng *rand.Rand, f folderPlan) message {
 		subject = fmt.Sprintf(subject, 1000+rng.Intn(9000))
 	}
 	m.subject = subject
-	m.body = pick(rng, allBodies)
+	// Every message has a snippet (the preview melia always stores); only the
+	// with_text fraction also has the full body_text, which melia fetches lazily.
+	text := pick(rng, allBodies)
+	m.snippet = text
+	if rng.Float64() < r.text {
+		m.body = text
+	}
 	return m
 }
 
 // msgRatios are per-message probabilities derived from the profile.
-type msgRatios struct{ flagged, attach, html float64 }
+type msgRatios struct{ flagged, attach, html, text, dup float64 }
 
-func ratios(m profile.Messages) msgRatios {
+func ratios(m profile.Messages, archive int) msgRatios {
 	if m.Total == 0 {
 		return msgRatios{}
 	}
@@ -224,7 +231,39 @@ func ratios(m profile.Messages) msgRatios {
 		flagged: float64(m.Flagged) / t,
 		attach:  float64(m.HasAttachments) / t,
 		html:    float64(m.WithHTML) / t,
+		text:    float64(m.WithText) / t,
+		dup:     dupProbability(m, archive),
 	}
+}
+
+// dupProbability is the chance an archive ("All Mail") message duplicates an
+// existing one (sharing its Message-ID), chosen so the reproduced
+// distinct_message_id matches the profile. Duplicates are only drawn from
+// archive folders, so when the profile implies more duplicates than the archive
+// can supply the probability is capped at 1.
+func dupProbability(m profile.Messages, archive int) float64 {
+	if archive == 0 {
+		return 0
+	}
+	dupTarget := m.Total - m.DistinctMessageID
+	if dupTarget <= 0 {
+		return 0
+	}
+	if p := float64(dupTarget) / float64(archive); p < 1 {
+		return p
+	}
+	return 1
+}
+
+// archiveCount is the total number of messages across archive folders.
+func archiveCount(plans []folderPlan) int {
+	n := 0
+	for _, f := range plans {
+		if f.archive {
+			n += f.count
+		}
+	}
+	return n
 }
 
 func dateRange(m profile.Messages) (first, last time.Time) {

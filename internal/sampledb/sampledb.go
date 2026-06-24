@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +55,7 @@ type addr struct{ Name, Email string }
 // Build creates a fresh SQLite database at path and fills it with sample data.
 // An existing file is replaced.
 func Build(ctx context.Context, path string, opts Options) error {
-	db, err := sql.Open("sqlite", path)
+	db, err := openForWrite(path)
 	if err != nil {
 		return err
 	}
@@ -62,6 +64,33 @@ func Build(ctx context.Context, path string, opts Options) error {
 		return err
 	}
 	return db.Close()
+}
+
+// openForWrite opens path for generation.
+//
+// temp_store=memory keeps SQLite's scratch storage in memory. Generating a
+// realistically-sized database inserts thousands of rows in a single
+// transaction, during which SQLite spills a statement journal to a temporary
+// file; with that pragma it never does, so generation does not depend on an OS
+// temporary directory being resolvable (an unset TMPDIR otherwise fails the
+// temp-file open with SQLITE_CANTOPEN). SQLite is a single-writer, so the pool
+// is capped at one connection.
+func openForWrite(path string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", path, err)
+	}
+	vals := url.Values{}
+	vals.Add("_pragma", "busy_timeout(5000)")
+	vals.Add("_pragma", "temp_store(memory)")
+	dsn := url.URL{Scheme: "file", Path: abs, RawQuery: vals.Encode()}
+
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
 
 // Generate applies the melia schema to db and inserts the sample account,
@@ -176,6 +205,7 @@ type message struct {
 	to                           []addr
 	cc                           []addr
 	subject, body, bodyHTML      string
+	snippet                      string // explicit snippet; derived from body when empty
 	date                         time.Time
 	read, flagged, attach, draft bool
 }
@@ -189,11 +219,18 @@ func (m message) insert(ctx context.Context, stmt *sql.Stmt) error {
 	if threadID == "" {
 		threadID = m.id
 	}
+	// The snippet (preview) is always present; body_text may be empty, matching
+	// melia where the full body is fetched lazily. Fall back to the body for
+	// generators that do not set an explicit snippet.
+	snippetSrc := m.snippet
+	if snippetSrc == "" {
+		snippetSrc = m.body
+	}
 	_, err := stmt.ExecContext(ctx,
 		m.id, accountID, m.folderID,
 		msgID, threadID,
 		m.from.Email, nullable(m.from.Name), addrsJSON(m.to), nullableJSON(m.cc),
-		nullable(m.subject), snippet(m.body), nullable(m.body), nullable(m.bodyHTML),
+		nullable(m.subject), snippet(snippetSrc), nullable(m.body), nullable(m.bodyHTML),
 		m.date.UTC().Format("2006-01-02 15:04:05"),
 		b2i(m.read), b2i(m.flagged), b2i(m.attach), b2i(m.draft), m.id[4:],
 	)
