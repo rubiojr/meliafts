@@ -77,7 +77,7 @@ so use whichever suits your language:
 |---|---|
 | `MELIAFTS_EVENT` | the event name (currently always `new-message`) |
 | `MELIAFTS_ID` | message id |
-| `MELIAFTS_DATE` | message date, as stored |
+| `MELIAFTS_DATE` | message date, RFC 3339 (e.g. `2026-06-20T15:05:03Z`) |
 | `MELIAFTS_SUBJECT` | subject |
 | `MELIAFTS_FROM_NAME` | sender display name (may be empty) |
 | `MELIAFTS_FROM_ADDRESS` | sender email address |
@@ -94,9 +94,10 @@ The full message record is also piped to the script's standard input as a JSON
 object (the same shape as `ms search --json`), e.g.:
 
 ```json
-{"id":"msg-00042","date":"2026-06-20 15:05:03","is_read":false,
- "from_name":"Amazon","from_address":"pickup-point@amazon.es",
- "subject":"Paquete listo para recogida","snippet":"El paquete está listo…"}
+{"id":"msg-00042","date":"2026-06-20T15:05:03Z","is_read":false,
+ "is_flagged":false,"has_attachments":false,"from_name":"Amazon",
+ "from_address":"pickup-point@amazon.es","subject":"Paquete listo para recogida",
+ "snippet":"El paquete está listo…"}
 ```
 
 The body is **not** included by default (to keep watching cheap). If you need
