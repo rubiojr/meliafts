@@ -322,7 +322,7 @@ func TestParseWhenAbsolute(t *testing.T) {
 	at, rel, err := parseWhen("2024-01-15")
 	require.NoError(t, err)
 	assert.Nil(t, rel)
-	assert.Equal(t, time.Date(2024, 1, 15, 0, 0, 0, 0, time.Local), at)
+	assert.Equal(t, time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC), at)
 }
 
 func TestCompileDate(t *testing.T) {
@@ -346,7 +346,7 @@ func TestCompileDate(t *testing.T) {
 		c, err := q.Compile(Options{Now: now})
 		require.NoError(t, err)
 		assert.Contains(t, c.SQL, "julianday(m.date) < julianday(?)")
-		assert.Equal(t, []any{time.Date(2024, 2, 1, 0, 0, 0, 0, time.Local).UTC().Format("2006-01-02 15:04:05")}, c.Args)
+		assert.Equal(t, []any{"2024-02-01 00:00:00"}, c.Args)
 	})
 
 	t.Run("negated newer flips to older", func(t *testing.T) {
@@ -370,6 +370,34 @@ func TestCompileDate(t *testing.T) {
 			c.SQL)
 		assert.Equal(t, []any{`subject : "invoice"`, "2024-01-15 12:00:00"}, c.Args)
 	})
+}
+
+// TestCompileDateAbsoluteTimezoneIndependent guards against a regression where
+// absolute dates were parsed in the host's local time zone, so the same query
+// against the same database returned different results depending on $TZ. The
+// compiled cutoff must be the UTC wall-clock the user typed, regardless of
+// time.Local.
+func TestCompileDateAbsoluteTimezoneIndependent(t *testing.T) {
+	saved := time.Local
+	t.Cleanup(func() { time.Local = saved })
+
+	zones := map[string]*time.Location{
+		"UTC":             time.UTC,
+		"madrid(+1)":      time.FixedZone("CET", 1*3600),
+		"honolulu(-10)":   time.FixedZone("HST", -10*3600),
+		"kiritimati(+14)": time.FixedZone("LINT", 14*3600),
+	}
+	for name, loc := range zones {
+		t.Run(name, func(t *testing.T) {
+			time.Local = loc
+			q, err := Parse("older:2024-01-31")
+			require.NoError(t, err)
+			c, err := q.Compile(Options{})
+			require.NoError(t, err)
+			assert.Equal(t, []any{"2024-01-31 00:00:00"}, c.Args,
+				"absolute date cutoff must not depend on time.Local")
+		})
+	}
 }
 
 func TestCompileSQL(t *testing.T) {

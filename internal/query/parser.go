@@ -184,7 +184,9 @@ func parseRelSpec(s string) (*RelSpec, bool) {
 }
 
 // parseAbsDate parses an absolute date in a few common layouts, interpreted in
-// the local time zone.
+// UTC. Message dates are stored and compared in UTC (see addDate), and relative
+// durations resolve against the current instant, so interpreting absolute dates
+// in UTC too keeps results independent of the host's local time zone.
 func parseAbsDate(s string) (time.Time, bool) {
 	layouts := []string{
 		"2006-01-02",
@@ -195,7 +197,7 @@ func parseAbsDate(s string) (time.Time, bool) {
 		"2006-01-02T15:04:05",
 	}
 	for _, l := range layouts {
-		if t, err := time.ParseInLocation(l, s, time.Local); err == nil {
+		if t, err := time.ParseInLocation(l, s, time.UTC); err == nil {
 			return t, true
 		}
 	}
