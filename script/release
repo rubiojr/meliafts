@@ -47,7 +47,12 @@ printf '%s\n' "$updated" >"$version_file"
 gofmt -w "$version_file"
 
 git add "$version_file"
-git commit --quiet -m "Release v${next}"
+# Disable auto gc / maintenance for the release commit: otherwise git may run
+# "git maintenance run --auto" (pack-refs) right after committing, which replays
+# every existing tag through the reference-transaction hook. A failure there is
+# unrelated to the release but pollutes the output and makes the bump look
+# broken. Turning it off keeps the release commit deterministic and quiet.
+git -c gc.auto=0 -c maintenance.auto=false commit --quiet -m "Release v${next}"
 
 echo "bumped ${current} -> ${next} and committed"
 echo "tag it with:  git tag v${next}"

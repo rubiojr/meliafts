@@ -8,6 +8,13 @@
 # "prepared" phase and ignore everything else. The check compares against the
 # version.go in the working tree, which is the commit you are tagging when you
 # tag HEAD right after a release bump.
+#
+# Caveat: `git pack-refs` (also run by git's auto maintenance after a commit)
+# moves loose refs into packed-refs and presents every existing tag to this hook
+# as an all-zero "creation". So we additionally skip any tag that already
+# resolves — a genuinely new tag does not yet exist while the transaction is only
+# "prepared", whereas a tag being packed does. Without this, packing old release
+# tags (v0.1.0, …) would be rejected for not matching the current version.
 set -eu
 
 [ "${1:-}" = prepared ] || exit 0
@@ -23,6 +30,11 @@ while read -r old _ ref; do
 	case "$old" in
 	*[!0]*) continue ;;
 	esac
+	# Skip tags that already exist (e.g. pack-refs moving them into packed-refs);
+	# only a genuinely new tag fails to resolve here.
+	if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+		continue
+	fi
 
 	[ -f "$version_file" ] || continue
 
