@@ -23,14 +23,15 @@ By default it generates random + curated demo messages. With --from-db it instea
 profiles a real melia database (read-only, reading only aggregate structure —
 never content) and reproduces that structure: message counts, folder layout,
 date range, flag ratios and "All Mail" duplication. --profile reproduces a saved
-profile JSON, and --save-profile writes the (content-free) profile it used.`,
+profile JSON, and --save-profile writes the (content-free) structure profile of
+the generated database.`,
 	Flags: []cli.Flag{
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: "melia.db", Usage: "output database path (replaced if it exists)"},
 		&cli.IntFlag{Name: "count", Aliases: []string{"n"}, Value: 140, Usage: "number of random messages (ignored with --from-db/--profile)"},
 		&cli.Int64Flag{Name: "seed", Value: 1, Usage: "random seed for reproducibility"},
 		&cli.StringFlag{Name: "from-db", Usage: "profile this real melia database and reproduce its structure"},
 		&cli.StringFlag{Name: "profile", Usage: "reproduce the structure from this profile JSON file"},
-		&cli.StringFlag{Name: "save-profile", Usage: "write the profile used to this JSON file"},
+		&cli.StringFlag{Name: "save-profile", Usage: "write the generated database's (content-free) structure profile to this JSON file"},
 	},
 	Action: runGendb,
 }
@@ -54,11 +55,9 @@ func runGendb(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	if prof != nil && cmd.String("save-profile") != "" {
-		if err := writeProfile(prof, cmd.String("save-profile")); err != nil {
-			removeTemp(tmp)
-			return err
-		}
+	if err := maybeSaveProfile(cmd, tmp, prof); err != nil {
+		removeTemp(tmp)
+		return err
 	}
 
 	if err := os.Rename(tmp, out); err != nil {
@@ -125,6 +124,25 @@ func loadProfile(cmd *cli.Command) (*profile.Profile, error) {
 	default:
 		return nil, nil
 	}
+}
+
+// maybeSaveProfile honours --save-profile in every mode. For --from-db/--profile
+// it writes the input profile; for random generation (prof == nil) it profiles
+// the freshly generated database at dbPath, so the flag is never silently
+// ignored.
+func maybeSaveProfile(cmd *cli.Command, dbPath string, prof *profile.Profile) error {
+	path := cmd.String("save-profile")
+	if path == "" {
+		return nil
+	}
+	p := prof
+	if p == nil {
+		var err error
+		if p, err = profileFromDB(dbPath); err != nil {
+			return err
+		}
+	}
+	return writeProfile(p, path)
 }
 
 func profileFromDB(path string) (*profile.Profile, error) {

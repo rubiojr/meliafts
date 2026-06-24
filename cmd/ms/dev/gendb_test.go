@@ -2,10 +2,12 @@ package dev
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/rubiojr/meliafts/internal/profile"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,4 +93,35 @@ func TestBuildToTempUsesGivenDir(t *testing.T) {
 	removeTemp(tmp)
 	_, err = os.Stat(tmp)
 	require.ErrorIs(t, err, os.ErrNotExist, "removeTemp must delete the temp file")
+}
+
+// TestGendbSaveProfileRandomGeneration asserts that --save-profile is honoured
+// for random generation: it writes a content-free profile describing the
+// generated database. It used to be silently ignored unless --from-db/--profile
+// was given.
+func TestGendbSaveProfileRandomGeneration(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "melia.db")
+	profPath := filepath.Join(dir, "profile.json")
+
+	require.NoError(t, runGendbArgs(t, "-o", out, "-n", "20", "--save-profile", profPath))
+
+	b, err := os.ReadFile(profPath)
+	require.NoError(t, err, "--save-profile must write a profile for random generation")
+
+	var p profile.Profile
+	require.NoError(t, json.Unmarshal(b, &p))
+	require.NotZero(t, p.Messages.Total, "saved profile should describe the generated messages")
+	require.NotEmpty(t, p.Folders, "saved profile should describe the generated folders")
+}
+
+// TestGendbSaveProfileRandomBadPathErrors asserts that an unwritable
+// --save-profile path is now reported rather than silently swallowed.
+func TestGendbSaveProfileRandomBadPathErrors(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "melia.db")
+	bad := filepath.Join(dir, "missing-dir", "profile.json")
+
+	err := runGendbArgs(t, "-o", out, "-n", "5", "--save-profile", bad)
+	require.Error(t, err, "an unwritable --save-profile path must be reported")
 }
